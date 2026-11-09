@@ -1,4 +1,10 @@
-export type Role = "viewer" | "refund_agent" | "refund_approver" | "finance_admin";
+export type Role =
+  | "viewer"
+  | "refund_agent"
+  | "refund_approver"
+  | "finance_admin"
+  | "flag_editor"
+  | "flag_approver";
 
 /** GET /api/me — the server's view of the caller. UI decisions use this, never raw token claims. */
 export interface Me {

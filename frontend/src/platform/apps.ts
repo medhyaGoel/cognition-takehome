@@ -31,7 +31,12 @@ export const APPS: AppDefinition[] = [
     nav: [
       { to: "/refunds", label: "Dashboard", icon: "◧", end: true },
       { to: "/refunds/queue", label: "Queue", icon: "☰" },
-      { to: "/refunds/new", label: "New refund", icon: "＋", roles: ["refund_agent", "finance_admin"] },
+      {
+        to: "/refunds/new",
+        label: "New refund",
+        icon: "＋",
+        roles: ["refund_agent", "finance_admin"],
+      },
       {
         to: "/refunds/notifications",
         label: "Notifications",
@@ -44,11 +49,11 @@ export const APPS: AppDefinition[] = [
   {
     id: "feature-flags",
     name: "Feature flags",
-    description: "Toggle features per business unit (coming next)",
+    description: "Toggle features per business unit and environment",
     basePath: "/feature-flags",
     icon: "⚑",
-    status: "planned",
-    nav: [],
+    status: "live",
+    nav: [{ to: "/feature-flags", label: "Flags", icon: "⚑", end: true }],
   },
   {
     id: "kyc-review",

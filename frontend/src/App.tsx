@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router";
+import { flagsRoutes } from "./apps/flags/routes";
 import { refundsRoutes } from "./apps/refunds/routes";
 import { AuthProvider } from "./platform/auth/AuthProvider";
 import type { AuthBackend } from "./platform/auth/types";
@@ -25,7 +26,10 @@ export function App({ backend }: { backend: AuthBackend }) {
             <div className="state state-error" role="alert">
               <div className="state-title">Sign-in failed</div>
               <div className="state-desc">{phase.error}</div>
-              <button className="btn btn-primary" onClick={() => window.location.assign("/")}>
+              <button
+                className="btn btn-primary"
+                onClick={() => window.location.assign("/")}
+              >
                 Try again
               </button>
             </div>
@@ -39,9 +43,15 @@ export function App({ backend }: { backend: AuthBackend }) {
             <Routes>
               <Route index element={<Navigate to="/refunds" replace />} />
               {refundsRoutes}
+              {flagsRoutes}
               <Route
                 path="*"
-                element={<EmptyState title="Page not found" description="Pick an app from the sidebar." />}
+                element={
+                  <EmptyState
+                    title="Page not found"
+                    description="Pick an app from the sidebar."
+                  />
+                }
               />
             </Routes>
           </AppShell>
