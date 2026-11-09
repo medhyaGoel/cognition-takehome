@@ -1,0 +1,101 @@
+# Local development stack. All credentials in this file are local-dev-only placeholders.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: app          # schema owner; only the `migrate` job connects as this role
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  # Stand-in for the client's payments system of record. We get a read-only role.
+  source-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: source_admin
+      POSTGRES_PASSWORD: source_admin
+      POSTGRES_DB: core_payments
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U source_admin -d core_payments"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - ./source-db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - sourcedata:/var/lib/postgresql/data
+
+  # Local OIDC identity provider. Production: Microsoft Entra ID / Okta / Google via OIDC_* env.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: http://localhost:8080
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./keycloak/internal-tools-realm.json:/opt/keycloak/data/import/internal-tools-realm.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && printf 'GET /health/ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  migrate:
+    build: ./backend
+    command: ["python", "-m", "app.bootstrap"]
+    environment: &backend-env
+      APP_ENV: development
+      DATABASE_URL: postgresql+psycopg://app_api:app_api_dev@db:5432/app
+      WORKER_DATABASE_URL: postgresql+psycopg://app_worker:app_worker_dev@db:5432/app
+      MIGRATION_DATABASE_URL: postgresql+psycopg://app:app@db:5432/app
+      SOURCE_DATABASE_URL: postgresql+psycopg://tools_reader:tools_reader_dev@source-db:5432/core_payments
+      OIDC_ISSUER: http://localhost:8080/realms/internal-tools
+      OIDC_JWKS_URL: http://keycloak:8080/realms/internal-tools/protocol/openid-connect/certs
+      OIDC_AUDIENCE: internal-tools-api
+      WORKFLOWS_PATH: /config/workflows.yaml
+    depends_on:
+      db:
+        condition: service_healthy
+      source-db:
+        condition: service_healthy
+
+  api:
+    build: ./backend
+    environment: *backend-env
+    volumes:
+      - ./config:/config:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+
+  worker:
+    build: ./backend
+    command: ["python", "-m", "app.worker"]
+    environment: *backend-env
+    volumes:
+      - ./config:/config:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
+  sourcedata:
