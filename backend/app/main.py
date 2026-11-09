@@ -10,24 +10,54 @@ from app.config import settings
 from app.platform.auth import Principal, get_principal
 from app.platform.errors import DomainError
 from app.platform.request_context import request_id_var
+from app.platform.security import (
+    BodySizeLimitMiddleware,
+    SecurityHeadersMiddleware,
+    configure_cors,
+    cors_origins_from_env,
+    fastapi_settings,
+    install_log_redaction,
+    internal_error_response,
+    max_body_bytes,
+)
 from app.platform.workflows.router import router as workflows_router
 
 logging.basicConfig(level=logging.INFO)
+install_log_redaction()
+logger = logging.getLogger("app")
 
-app = FastAPI(title="Internal Tools Platform", version="0.1.0")
+app = FastAPI(
+    title="Internal Tools Platform",
+    version="0.1.0",
+    **fastapi_settings(production=settings.is_production),
+)
+
+# Middleware order (outermost first): security headers -> CORS (off unless configured) ->
+# request id + generic 500 -> body size limit -> routes.
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=max_body_bytes())
+
+_REQUEST_ID_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:")
 
 
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
     incoming = request.headers.get("X-Request-ID", "")
-    request_id = incoming if 0 < len(incoming) <= 64 else str(uuid.uuid4())
+    valid = 0 < len(incoming) <= 64 and set(incoming) <= _REQUEST_ID_CHARS
+    request_id = incoming if valid else str(uuid.uuid4())
     token = request_id_var.set(request_id)
     try:
         response = await call_next(request)
+    except Exception:
+        logger.exception("unhandled error request_id=%s path=%s", request_id, request.url.path)
+        response = internal_error_response()
     finally:
         request_id_var.reset(token)
     response.headers["X-Request-ID"] = request_id
     return response
+
+
+configure_cors(app, cors_origins_from_env())
+app.add_middleware(SecurityHeadersMiddleware, production=settings.is_production)
 
 
 @app.exception_handler(DomainError)
@@ -35,6 +65,13 @@ async def domain_error_handler(_: Request, exc: DomainError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code, content={"error": {"code": exc.code, "message": exc.message}}
     )
+
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(_: Request, exc: Exception) -> JSONResponse:
+    """Backstop for errors raised outside the request-id middleware (e.g. in outer middleware)."""
+    logger.error("unhandled error outside request scope: %s", type(exc).__name__)
+    return internal_error_response()
 
 
 @app.get("/healthz", tags=["platform"])

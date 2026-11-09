@@ -10,7 +10,13 @@ def can_view_pii(principal: Principal) -> bool:
 
 
 def mask_email(email: str) -> str:
-    local, sep, domain = email.partition("@")
-    if not sep:
+    local, sep, domain = email.rpartition("@")
+    if not sep or not local or not domain:
         return "***"
     return f"{local[:1]}***@{domain}"
+
+
+def mask_name(name: str) -> str:
+    """'Ada Lovelace' -> 'A*** L***'."""
+    parts = name.split()
+    return " ".join(f"{p[:1]}***" for p in parts) if parts else "***"

@@ -9,8 +9,13 @@ Claims used:
   email           -> Principal.subject (human-readable actor in audit/RLS; must be verified)
   roles           -> app roles (unknown values ignored)
   groups "bu-xx"  -> business units the user may see (drives Postgres row-level security)
+
+Fail-closed verification order: size and header checks (only RS256, no `crit`) happen before any
+key lookup, so garbage or downgraded tokens never trigger a JWKS fetch. Any verification failure
+is a generic 401; an unreachable IdP is a generic 503. Details are logged, never returned.
 """
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -32,6 +37,11 @@ ALL_ROLES = frozenset({Role.VIEWER, Role.REFUND_AGENT, Role.REFUND_APPROVER, Rol
 BUSINESS_UNITS = frozenset({"US", "EU"})
 _BU_GROUP_PREFIX = "bu-"
 _ALGORITHMS = ["RS256"]
+_MAX_TOKEN_BYTES = 8192
+# Keycloak marks access tokens typ=Bearer (ID/refresh tokens differ); Entra omits the claim.
+_ACCEPTED_TOKEN_TYPES = (None, "Bearer")
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -61,10 +71,32 @@ def set_key_resolver(resolver: Callable[[str], object]) -> None:
     _key_resolver = resolver
 
 
+class IdentityProviderUnavailable(Exception):
+    """The signing keys could not be fetched; the token can't be verified either way."""
+
+
+def _signing_key(token: str):
+    try:
+        return _key_resolver(token)
+    except jwt.PyJWKClientConnectionError as exc:
+        raise IdentityProviderUnavailable from exc
+    except jwt.PyJWTError:
+        raise
+    except Exception as exc:  # malformed JWKS, resolver bug: never surface as a 500
+        raise IdentityProviderUnavailable from exc
+
+
 def decode_token(token: str) -> Principal:
+    if len(token) > _MAX_TOKEN_BYTES:
+        raise jwt.InvalidTokenError("token too large")
+    header = jwt.get_unverified_header(token)
+    if header.get("alg") not in _ALGORITHMS:
+        raise jwt.InvalidAlgorithmError("algorithm not allowed")
+    if "crit" in header:
+        raise jwt.InvalidTokenError("critical header extensions are not supported")
     claims = jwt.decode(
         token,
-        _key_resolver(token),
+        _signing_key(token),
         algorithms=_ALGORITHMS,
         audience=settings.oidc_audience,
         issuer=settings.oidc_issuer,
@@ -74,6 +106,8 @@ def decode_token(token: str) -> Principal:
     email = claims.get("email")
     if not isinstance(email, str) or not email or claims.get("email_verified") is not True:
         raise jwt.InvalidTokenError("verified email claim required")
+    if claims.get("typ") not in _ACCEPTED_TOKEN_TYPES:
+        raise jwt.InvalidTokenError("not an access token")
     roles = frozenset(r for r in claims.get("roles", []) if r in ALL_ROLES)
     business_units = frozenset(
         g.removeprefix(_BU_GROUP_PREFIX).upper()
@@ -89,17 +123,24 @@ def decode_token(token: str) -> Principal:
 
 
 _bearer = HTTPBearer(auto_error=False)
+_CHALLENGE = {"WWW-Authenticate": "Bearer"}
 
 
 def get_principal(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> Principal:
     if credentials is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing bearer token")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing bearer token", _CHALLENGE)
     try:
         return decode_token(credentials.credentials)
     except jwt.PyJWTError as exc:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token") from exc
+        logger.info("authentication failed (%s)", type(exc).__name__)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token", _CHALLENGE) from exc
+    except IdentityProviderUnavailable as exc:
+        logger.warning("identity provider keys unavailable: %r", exc.__cause__)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "Identity provider unavailable"
+        ) from exc
 
 
 def require_roles(*roles: str) -> Callable[..., Principal]:
