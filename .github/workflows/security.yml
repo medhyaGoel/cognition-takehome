@@ -24,7 +24,7 @@ jobs:
           fetch-depth: 0
       - name: Install gitleaks (checksum-verified)
         run: |
-          curl -sSfL --retry 3 -o gitleaks.tgz \
+          curl -sSfL --retry 10 --retry-delay 6 --retry-all-errors --retry-max-time 180 -o gitleaks.tgz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_SHA256}  gitleaks.tgz" | sha256sum -c -
           tar xzf gitleaks.tgz gitleaks && rm gitleaks.tgz
