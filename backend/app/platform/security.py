@@ -134,6 +134,38 @@ def internal_error_response() -> JSONResponse:
     return _error(500, "internal_error", "Internal server error")
 
 
+class UnhandledErrorMiddleware:
+    """Sends the generic 500 from *inside* CORS / security headers (Starlette's Exception handler
+    runs outside them, so a cross-origin SPA would see an opaque error), then re-raises so the
+    server still logs it and test clients still see the exception."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        started = False
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, tracking_send)
+        except Exception:
+            if not started:
+                response = internal_error_response()
+                request_id = scope.get("state", {}).get("request_id")
+                if request_id:
+                    response.headers["X-Request-ID"] = request_id
+                await response(scope, receive, send)
+            raise
+
+
 def max_body_bytes() -> int:
     return int(os.environ.get("MAX_REQUEST_BODY_BYTES", DEFAULT_MAX_BODY_BYTES))
 

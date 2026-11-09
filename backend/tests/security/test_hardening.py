@@ -168,6 +168,39 @@ def test_unhandled_errors_still_propagate_to_the_server(boom_route):
         TestClient(app).get(boom_route)
 
 
+def test_unhandled_500_keeps_cors_and_request_id_for_allowed_origins():
+    """The SPA must be able to read a 500 (and its request id) cross-origin."""
+    env = {**os.environ, "CORS_ALLOWED_ORIGINS": "http://localhost:5173"}
+    script = (
+        "import json\n"
+        "from fastapi.testclient import TestClient\n"
+        "from app.main import app\n"
+        "async def boom():\n"
+        "    raise RuntimeError('secret detail')\n"
+        "app.add_api_route('/api/__boom__', boom)\n"
+        "c = TestClient(app, raise_server_exceptions=False)\n"
+        "out = []\n"
+        "for origin in ('http://localhost:5173', 'https://evil.example.com'):\n"
+        "    r = c.get('/api/__boom__', headers={'Origin': origin, 'X-Request-ID': 'req-cors'})\n"
+        "    out.append({'status': r.status_code, 'body': r.json(), 'headers': dict(r.headers)})\n"
+        "print(json.dumps(out))\n"
+    )
+    out = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", script], cwd=BACKEND, env=env, capture_output=True, text=True
+    )
+    assert out.returncode == 0, out.stderr
+    allowed, disallowed = json.loads(out.stdout.strip().splitlines()[-1])
+    generic = {"error": {"code": "internal_error", "message": "Internal server error"}}
+    for r in (allowed, disallowed):
+        assert r["status"] == 500 and r["body"] == generic
+        assert r["headers"]["x-request-id"] == "req-cors"
+        assert r["headers"]["x-content-type-options"] == "nosniff"
+        assert r["headers"]["cache-control"] == "no-store"
+    assert allowed["headers"]["access-control-allow-origin"] == "http://localhost:5173"
+    assert "x-request-id" in allowed["headers"]["access-control-expose-headers"].lower()
+    assert "access-control-allow-origin" not in disallowed["headers"]
+
+
 def test_backstop_exception_handler_is_generic():
     response = asyncio.run(unhandled_error_handler(None, RuntimeError("leak me")))
     assert response.status_code == 500

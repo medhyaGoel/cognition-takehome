@@ -13,6 +13,7 @@ from app.platform.request_context import request_id_var
 from app.platform.security import (
     BodySizeLimitMiddleware,
     SecurityHeadersMiddleware,
+    UnhandledErrorMiddleware,
     configure_cors,
     cors_origins_from_env,
     fastapi_settings,
@@ -34,7 +35,7 @@ app = FastAPI(
 )
 
 # Middleware order (outermost first): security headers -> CORS (off unless configured) ->
-# request id + generic 500 -> body size limit -> routes.
+# generic 500 -> request id -> body size limit -> routes.
 app.add_middleware(BodySizeLimitMiddleware, max_bytes=max_body_bytes())
 
 _REQUEST_ID_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:")
@@ -51,13 +52,14 @@ async def request_id_middleware(request: Request, call_next):
         response = await call_next(request)
     except Exception:
         logger.exception("unhandled error request_id=%s path=%s", request_id, request.url.path)
-        raise  # -> unhandled_error_handler (generic 500); Starlette then re-raises for the server
+        raise  # -> UnhandledErrorMiddleware (generic 500 inside CORS), then re-raised to the server
     finally:
         request_id_var.reset(token)
     response.headers["X-Request-ID"] = request_id
     return response
 
 
+app.add_middleware(UnhandledErrorMiddleware)
 configure_cors(app, cors_origins_from_env())
 app.add_middleware(SecurityHeadersMiddleware, production=settings.is_production)
 
