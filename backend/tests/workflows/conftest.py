@@ -45,7 +45,9 @@ def make_refund(owner_engine, make_payment):
         status: str = "pending_approval",
         age_minutes: int = 0,
     ) -> uuid.UUID:
-        payment_id = make_payment(amount_cents=max(amount_cents, 100_000), business_unit=business_unit)
+        payment_id = make_payment(
+            amount_cents=max(amount_cents, 100_000), business_unit=business_unit
+        )
         rid = uuid.uuid4()
         created = datetime.now(UTC) - timedelta(minutes=age_minutes)
         with owner_engine.begin() as conn:

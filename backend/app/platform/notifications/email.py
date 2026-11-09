@@ -24,6 +24,7 @@ _DETAILS = (
     ("business_unit", "Business unit"),
     ("status", "Status"),
     ("reason", "Reason"),
+    ("failure_reason", "Failure reason"),
     ("requested_by", "Requested by"),
     ("customer_email", "Customer"),
 )

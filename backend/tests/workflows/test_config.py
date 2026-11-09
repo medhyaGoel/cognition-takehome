@@ -41,35 +41,64 @@ def test_on_key_is_not_parsed_as_boolean():
 @pytest.mark.parametrize(
     ("body", "message"),
     [
-        ("  - {id: r1, on: a.b, conditions: [{field: x, op: regex, value: 1}],"
-         " actions: [{auto_approve: {}}]}", "unknown op 'regex'"),
+        (
+            "  - {id: r1, on: a.b, conditions: [{field: x, op: regex, value: 1}],"
+            " actions: [{auto_approve: {}}]}",
+            "unknown op 'regex'",
+        ),
         ("  - {id: r1, on: a.b, actions: [{delete_everything: {}}]}", "unknown action"),
-        ("  - {id: r1, on: a.b, actions: [{auto_approve: {}}]}\n"
-         "  - {id: r1, on: a.b, actions: [{auto_approve: {}}]}", "duplicate id(s): r1"),
+        (
+            "  - {id: r1, on: a.b, actions: [{auto_approve: {}}]}\n"
+            "  - {id: r1, on: a.b, actions: [{auto_approve: {}}]}",
+            "duplicate id(s): r1",
+        ),
         ("  - {id: r1, id: r2, on: a.b, actions: [{auto_approve: {}}]}", "duplicate key 'id'"),
-        ("  - {id: r1, on: a.b, actions: [{notify: {channel: nope, template: x}}]}",
-         "unknown channel 'nope'"),
-        ("  - {id: r1, on: a.b, actions: [{notify: {channel: ops, template: '{x.__class__}'}}]}",
-         "no attribute access"),
-        ("  - {id: r1, on: a.b, actions: [{notify: {channel: ops, template: '{x[0]}'}}]}",
-         "no attribute access"),
-        ("  - {id: r1, on: a.b, actions: [{notify: {channel: ops, template: '{}'}}]}",
-         "positional"),
-        ("  - {id: r1, on: a.b, actions: [{notify: {channel: ops, template: '{x:>9999}'}}]}",
-         "format specs are not allowed"),
-        ("  - {id: r1, on: a.b, actions: [{notify: {channel: ops, template: '{x!r}'}}]}",
-         "conversions are not allowed"),
-        ("  - {id: r1, on: a.b, conditions: [{field: x, op: gt, value: '5'}],"
-         " actions: [{auto_approve: {}}]}", "must be an integer"),
-        ("  - {id: r1, on: a.b, conditions: [{field: x, op: eq, value: 1.5}],"
-         " actions: [{auto_approve: {}}]}", "floats are not allowed"),
-        ("  - {id: r1, on: a.b, actions: [{set_required_approvals: {count: 9}}]}",
-         "between 0 and 5"),
+        (
+            "  - {id: r1, on: a.b, actions: [{notify: {channel: nope, template: x}}]}",
+            "unknown channel 'nope'",
+        ),
+        (
+            "  - {id: r1, on: a.b, actions: [{notify: {channel: ops, template: '{x.__class__}'}}]}",
+            "no attribute access",
+        ),
+        (
+            "  - {id: r1, on: a.b, actions: [{notify: {channel: ops, template: '{x[0]}'}}]}",
+            "no attribute access",
+        ),
+        (
+            "  - {id: r1, on: a.b, actions: [{notify: {channel: ops, template: '{}'}}]}",
+            "positional",
+        ),
+        (
+            "  - {id: r1, on: a.b, actions: [{notify: {channel: ops, template: '{x:>9999}'}}]}",
+            "format specs are not allowed",
+        ),
+        (
+            "  - {id: r1, on: a.b, actions: [{notify: {channel: ops, template: '{x!r}'}}]}",
+            "conversions are not allowed",
+        ),
+        (
+            "  - {id: r1, on: a.b, conditions: [{field: x, op: gt, value: '5'}],"
+            " actions: [{auto_approve: {}}]}",
+            "must be an integer",
+        ),
+        (
+            "  - {id: r1, on: a.b, conditions: [{field: x, op: eq, value: 1.5}],"
+            " actions: [{auto_approve: {}}]}",
+            "floats are not allowed",
+        ),
+        (
+            "  - {id: r1, on: a.b, actions: [{set_required_approvals: {count: 9}}]}",
+            "between 0 and 5",
+        ),
         ("  - {id: r1, on: a.b, extra: 1, actions: [{auto_approve: {}}]}", "unknown key(s): extra"),
         ("  - {id: r1, on: a.b, actions: []}", "must not be empty"),
         ("  - {id: r1, on: 'x; import os', actions: [{auto_approve: {}}]}", "invalid value"),
-        ("  - {id: r1, on: a.b, conditions: [{field: __class__.x, op: eq, value: 1}],"
-         " actions: [{auto_approve: {}}]}", "invalid value"),
+        (
+            "  - {id: r1, on: a.b, conditions: [{field: __class__.x, op: eq, value: 1}],"
+            " actions: [{auto_approve: {}}]}",
+            "invalid value",
+        ),
     ],
 )
 def test_invalid_rules_fail_fast_with_clear_error(body, message):
@@ -86,17 +115,26 @@ def test_invalid_rules_fail_fast_with_clear_error(body, message):
         ("version: 1\nchannels: {c: {adapters: [log]}}\n", "must include in_app"),
         ("version: 1\nchannels: {c: {adapters: [in_app, sms]}}\n", "unknown adapter 'sms'"),
         ("version: 1\nchannels: {c: {adapters: [in_app, email]}}\n", "email_to"),
-        ("version: 1\nchannels: {c: {adapters: [in_app, email], email_to: [nope]}}\n",
-         "invalid value"),
+        (
+            "version: 1\nchannels: {c: {adapters: [in_app, email], email_to: [nope]}}\n",
+            "invalid value",
+        ),
         ("version: 1\nlinks: {refund: 'https://evil.test/{id}'}\n", "invalid value"),
-        ("version: 1\nschedules: [{id: s, job: nope, actions: [{auto_approve: {}}]}]\n",
-         "unknown job 'nope'"),
-        ("version: 1\nchannels: {c: {adapters: [in_app]}}\nschedules: [{id: s,"
-         " job: refund_sla_escalation, actions: [{auto_approve: {}}]}]\n",
-         "only support notify"),
-        ("version: 1\nchannels: {c: {adapters: [in_app]}}\nschedules: [{id: s,"
-         " job: refund_sla_escalation, params: {sla_minutes: 0},"
-         " actions: [{notify: {channel: c, template: x}}]}]\n", "sla_minutes"),
+        (
+            "version: 1\nschedules: [{id: s, job: nope, actions: [{auto_approve: {}}]}]\n",
+            "unknown job 'nope'",
+        ),
+        (
+            "version: 1\nchannels: {c: {adapters: [in_app]}}\nschedules: [{id: s,"
+            " job: refund_sla_escalation, actions: [{auto_approve: {}}]}]\n",
+            "only support notify",
+        ),
+        (
+            "version: 1\nchannels: {c: {adapters: [in_app]}}\nschedules: [{id: s,"
+            " job: refund_sla_escalation, params: {sla_minutes: 0},"
+            " actions: [{notify: {channel: c, template: x}}]}]\n",
+            "sla_minutes",
+        ),
         ("version: 1\nrules: [\n", "invalid YAML"),
         ("version: 1\nx: !!python/object/apply:os.system [echo hi]\n", "invalid YAML"),
     ],

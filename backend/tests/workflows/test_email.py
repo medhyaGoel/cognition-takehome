@@ -65,10 +65,17 @@ def large_refund_email_payload(**data):
         **data,
     )
     cfg = get_config()
-    (_, action), = [n for n in __import__("app.platform.workflows.engine", fromlist=["x"])
-                     .evaluate(cfg, event).notifications]
-    (payload,) = [p for p in plan_messages(cfg, "refund-large-two-approvals", action, event)
-                  if p["adapter"] == "email"]
+    ((_, action),) = [
+        n
+        for n in __import__("app.platform.workflows.engine", fromlist=["x"])
+        .evaluate(cfg, event)
+        .notifications
+    ]
+    (payload,) = [
+        p
+        for p in plan_messages(cfg, "refund-large-two-approvals", action, event)
+        if p["adapter"] == "email"
+    ]
     return event, payload
 
 
@@ -175,7 +182,11 @@ def test_credentials_are_used_but_never_logged(smtp_sink, outbox_rows, caplog):
     _enqueue_email()
     with caplog.at_level(logging.DEBUG):
         bad = dispatch_batch(
-            adapters={"email": EmailAdapter(_settings(port, username=USERNAME, password="wrong-pw"))}
+            adapters={
+                "email": EmailAdapter(
+                    _settings(port, username=USERNAME, password="wrong-pw", timeout=1.0)
+                )
+            }
         )
     assert bad.failed == 1
     errors = " ".join(r["last_error"] or "" for r in outbox_rows())
@@ -198,7 +209,11 @@ def test_settings_from_env(monkeypatch):
     monkeypatch.delenv("WEB_BASE_URL", raising=False)
     s = SmtpSettings.from_env()
     assert (s.host, s.port, s.sender, s.use_tls, s.username) == (
-        "mailpit", 1025, "it@example.com", True, "u",
+        "mailpit",
+        1025,
+        "it@example.com",
+        True,
+        "u",
     )
     assert s.web_base_url == "http://localhost:5173"
 

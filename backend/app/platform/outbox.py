@@ -57,7 +57,8 @@ def enqueue(
     )
     if dedupe_key is not None:
         stmt = stmt.on_conflict_do_nothing(index_elements=["dedupe_key"])
-    return db.execute(stmt).rowcount == 1
+    # SQLAlchemy 2.1 only reports INSERT rowcount when asked to preserve it.
+    return db.execute(stmt.execution_options(preserve_rowcount=True)).rowcount == 1
 
 
 @dataclass(frozen=True)
