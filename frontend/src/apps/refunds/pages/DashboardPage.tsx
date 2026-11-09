@@ -11,8 +11,16 @@ import { EmptyState, ErrorState, SkeletonRows } from "../../../platform/componen
 import { useQuery } from "../../../platform/hooks/useQuery";
 import { formatCents } from "../../../platform/money";
 import { ageLabel, formatDateTime, formatDuration } from "../../../platform/time";
-import { fetchRecentRefunds } from "../api";
-import { CHART_GROUPS, computeDashboard, type CurrencyTotals, type DayBucket } from "../dashboard";
+import { fetchRecentRefunds, fetchRefundDetails } from "../api";
+import {
+  approvedByHumans,
+  CHART_GROUPS,
+  computeDashboard,
+  median,
+  timeToApproveMs,
+  type CurrencyTotals,
+  type DayBucket,
+} from "../dashboard";
 import type { Refund } from "../types";
 import { shortId } from "./QueuePage";
 
@@ -125,6 +133,8 @@ function DayChart({ data }: { data: DayBucket[] }) {
   );
 }
 
+const TIME_TO_APPROVE_SAMPLE = 50;
+
 export function DashboardPage() {
   const api = useApi();
   const navigate = useNavigate();
@@ -140,6 +150,25 @@ export function DashboardPage() {
         : null,
     [q.data, bu, me.subject, canApprove],
   );
+
+  // Decision timestamps only exist on RefundDetail.approvals, so fetch details for the most
+  // recent human-approved refunds in the window (bounded, newest first).
+  const approvalIds = useMemo(
+    () => (q.data ? approvedByHumans(q.data.rows).slice(0, TIME_TO_APPROVE_SAMPLE).map((r) => r.id) : []),
+    [q.data],
+  );
+  const tta = useQuery(
+    async (s) => {
+      const details = await fetchRefundDetails(api, approvalIds, s);
+      return details.flatMap((d) => {
+        const ms = timeToApproveMs(d);
+        return ms === null ? [] : [{ bu: d.business_unit, ms }];
+      });
+    },
+    [api, approvalIds],
+  );
+  const ttaSamples = tta.data?.filter((x) => bu === null || x.bu === bu).map((x) => x.ms) ?? [];
+  const ttaMedian = median(ttaSamples);
 
   const oldest = q.data?.rows.at(-1)?.created_at;
   const windowLabel = !q.data
@@ -253,13 +282,17 @@ export function DashboardPage() {
             <KpiCard
               label="Median time to approve"
               tone="accent"
-              value={stats.medianTimeToApproveMs === null ? "—" : formatDuration(stats.medianTimeToApproveMs)}
+              value={tta.loading && !tta.data ? "…" : ttaMedian === null ? "—" : formatDuration(ttaMedian)}
               sub={
-                stats.timeToApproveSample === 0
-                  ? "No human-approved refunds yet"
-                  : `${stats.timeToApproveSample} approved refund${stats.timeToApproveSample === 1 ? "" : "s"}${
-                      stats.timeToApproveExact ? "" : " · upper bound, includes payout"
-                    }`
+                tta.error
+                  ? "Couldn't load approval times"
+                  : tta.loading && !tta.data
+                    ? "Loading approval times…"
+                    : ttaSamples.length === 0
+                      ? "No approved refunds in this window yet"
+                      : `Request to final approval · ${ttaSamples.length} approved refund${ttaSamples.length === 1 ? "" : "s"}${
+                          approvalIds.length === TIME_TO_APPROVE_SAMPLE ? " (most recent)" : ""
+                        }`
               }
             />
           </div>

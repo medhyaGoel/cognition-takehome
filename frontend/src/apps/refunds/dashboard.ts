@@ -1,4 +1,4 @@
-import type { Refund, RefundStatus } from "./types";
+import type { Refund, RefundDetail, RefundStatus } from "./types";
 
 export type CurrencyTotals = Record<string, number>;
 
@@ -12,15 +12,33 @@ export interface DashboardStats {
   awaitingPayout: Kpi;
   refunded7d: Kpi;
   failed: Kpi;
-  medianTimeToApproveMs: number | null;
-  timeToApproveSample: number;
-  /** False when some samples were already paid out, so their durations include payout time. */
-  timeToApproveExact: boolean;
   byDay: DayBucket[];
   attention: Refund[];
 }
 
 const HUMAN_APPROVED: RefundStatus[] = ["approved", "processing", "succeeded", "failed"];
+
+/** Refunds that went through human approval, so they have a decision time (any status from `approved` on). */
+export function approvedByHumans(rows: Refund[]): Refund[] {
+  return rows.filter((r) => r.required_approvals > 0 && HUMAN_APPROVED.includes(r.status));
+}
+
+/**
+ * Created -> the approval decision that met `required_approvals`, from RefundDetail.approvals[].created_at
+ * (the list endpoint has no decision timestamp). Null if the refund wasn't human-approved.
+ */
+export function timeToApproveMs(d: RefundDetail): number | null {
+  if (d.required_approvals <= 0 || !HUMAN_APPROVED.includes(d.status)) return null;
+  const approvals = d.approvals
+    .filter((a) => a.decision === "approved")
+    .map((a) => Date.parse(a.created_at))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  const decided = approvals[d.required_approvals - 1] ?? approvals.at(-1);
+  const created = Date.parse(d.created_at);
+  if (decided === undefined || !Number.isFinite(created) || decided < created) return null;
+  return decided - created;
+}
 
 export type ChartGroup = "pending" | "in_flight" | "succeeded" | "closed";
 
@@ -81,14 +99,6 @@ export function computeDashboard(
   const rows = opts.businessUnit ? all.filter((r) => r.business_unit === opts.businessUnit) : all;
   const by = (...s: RefundStatus[]) => rows.filter((r) => s.includes(r.status));
 
-  // The list has no approval timestamp. For a refund still in `approved`, updated_at is the
-  // approval moment (exact). After payout it is the payout moment, so for processing/succeeded/
-  // failed refunds the gap is an upper bound. Auto-approved (0 required) refunds are excluded.
-  const approvedByHumans = rows.filter((r) => r.required_approvals > 0 && HUMAN_APPROVED.includes(r.status));
-  const approveDurations = approvedByHumans
-    .map((r) => Date.parse(r.updated_at) - Date.parse(r.created_at))
-    .filter((ms) => Number.isFinite(ms) && ms >= 0);
-
   const sevenDaysAgo = now - 7 * DAY_MS;
   const refunded7d = rows.filter((r) => r.status === "succeeded" && Date.parse(r.updated_at) >= sevenDaysAgo);
 
@@ -122,9 +132,6 @@ export function computeDashboard(
     awaitingPayout: kpi(by("approved", "processing")),
     refunded7d: kpi(refunded7d),
     failed: kpi(by("failed")),
-    medianTimeToApproveMs: median(approveDurations),
-    timeToApproveSample: approveDurations.length,
-    timeToApproveExact: approvedByHumans.every((r) => r.status === "approved"),
     byDay: [...buckets.values()],
     attention,
   };

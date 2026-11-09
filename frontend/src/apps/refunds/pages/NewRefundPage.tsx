@@ -13,6 +13,9 @@ import { formatDateTime } from "../../../platform/time";
 import { refundsApi } from "../api";
 import type { Payment, Refund } from "../types";
 
+/** Backend cap on GET /api/payments (PAYMENT_SEARCH_LIMIT). */
+const PAYMENT_LIST_LIMIT = 50;
+
 export function NewRefundPage({ newKey }: { newKey?: KeyFactory } = {}) {
   const api = useApi();
   const navigate = useNavigate();
@@ -30,28 +33,30 @@ export function NewRefundPage({ newKey }: { newKey?: KeyFactory } = {}) {
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const r = refundsApi(api);
-  const shownResults = query.trim().length >= 2 ? results : null;
 
-  // Debounced payment search.
+  // Empty query lists the most recent payments (server caps at PAYMENT_LIST_LIMIT, RLS-scoped);
+  // typing narrows it, debounced.
   useEffect(() => {
     const q = query.trim();
-    if (q.length < 2) return;
     const ctrl = new AbortController();
-    const t = window.setTimeout(() => {
-      setSearching(true);
-      refundsApi(api)
-        .searchPayments(q, ctrl.signal)
-        .then((rows) => {
-          setResults(rows);
-          setSearchError(null);
-        })
-        .catch((err: unknown) => {
-          if (!ctrl.signal.aborted && err instanceof ApiError) setSearchError(err);
-        })
-        .finally(() => {
-          if (!ctrl.signal.aborted) setSearching(false);
-        });
-    }, 250);
+    const t = window.setTimeout(
+      () => {
+        setSearching(true);
+        refundsApi(api)
+          .searchPayments(q, ctrl.signal)
+          .then((rows) => {
+            setResults(rows);
+            setSearchError(null);
+          })
+          .catch((err: unknown) => {
+            if (!ctrl.signal.aborted && err instanceof ApiError) setSearchError(err);
+          })
+          .finally(() => {
+            if (!ctrl.signal.aborted) setSearching(false);
+          });
+      },
+      q ? 250 : 0,
+    );
     return () => {
       ctrl.abort();
       window.clearTimeout(t);
@@ -136,14 +141,14 @@ export function NewRefundPage({ newKey }: { newKey?: KeyFactory } = {}) {
         <Card title="1. Find the payment">
           <label className="field">
             <span className="label" id={ids.q}>
-              Search by provider reference or customer name
+              Search by customer name or charge reference
             </span>
             <div className="input-wrap">
               <input
                 className="input"
                 aria-labelledby={ids.q}
                 value={query}
-                placeholder="e.g. pi_1001 or Jane Doe"
+                placeholder="ch_2003 or Ada Nakamura"
                 onChange={(e) => setQuery(e.target.value)}
                 autoFocus
               />
@@ -151,36 +156,62 @@ export function NewRefundPage({ newKey }: { newKey?: KeyFactory } = {}) {
             </div>
           </label>
           {searchError && <Banner tone="danger">{errorText(searchError)}</Banner>}
-          {shownResults && shownResults.length === 0 && (
-            <EmptyState title="No payments found" description="Only payments in your business units are searchable." />
+          {results && results.length === 0 && (
+            <EmptyState
+              title={query.trim() ? `No payments match "${query.trim()}"` : "No payments in your business units"}
+              description="Search by customer name (e.g. Ada Nakamura) or charge reference (e.g. ch_2003). Only payments in your business units are shown."
+            />
           )}
-          {shownResults && shownResults.length > 0 && (
-            <ul className="result-list" aria-label="Payments">
-              {shownResults.map((p) => (
-                <li key={p.id}>
-                  <button
-                    type="button"
-                    className={`result ${payment?.id === p.id ? "selected" : ""}`}
-                    onClick={() => void selectPayment(p.id)}
-                  >
-                    <span className="result-main">
-                      <span className="mono">{p.provider_ref}</span>
-                      <span>{p.customer_name}</span>
-                    </span>
-                    <span className="result-side">
-                      <Money cents={p.amount_cents} currency={p.currency} />
-                      <Chip tone="accent">{p.business_unit}</Chip>
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+          {results && results.length > 0 && (
+            <>
+              <p className="muted small">
+                {query.trim()
+                  ? `${results.length}${results.length >= PAYMENT_LIST_LIMIT ? "+" : ""} matching payment${results.length === 1 ? "" : "s"}`
+                  : `${results.length >= PAYMENT_LIST_LIMIT ? `${PAYMENT_LIST_LIMIT} most recent` : "All"} payments in your business units`}
+              </p>
+              <ul className="result-list" aria-label="Payments">
+                {results.map((p) => {
+                  const exhausted = p.refundable_cents <= 0;
+                  return (
+                    <li key={p.id}>
+                      <button
+                        type="button"
+                        className={`result ${payment?.id === p.id ? "selected" : ""}`}
+                        onClick={() => void selectPayment(p.id)}
+                        disabled={exhausted}
+                        title={exhausted ? "Nothing left to refund on this payment" : undefined}
+                      >
+                        <span className="result-main">
+                          <span className="result-name">{p.customer_name}</span>
+                          <span className="mono muted">{p.provider_ref}</span>
+                          <Chip tone="accent">{p.business_unit}</Chip>
+                        </span>
+                        <span className="result-side">
+                          <span className="result-amounts">
+                            <Money cents={p.amount_cents} currency={p.currency} />
+                            <span className="muted small">
+                              {exhausted ? (
+                                "Nothing refundable"
+                              ) : (
+                                <>
+                                  <Money cents={p.refundable_cents} currency={p.currency} /> refundable
+                                </>
+                              )}
+                            </span>
+                          </span>
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
           )}
         </Card>
 
         <Card title="2. Refund details">
           {!payment ? (
-            <EmptyState title="Select a payment" description="Search and pick the payment to refund." />
+            <EmptyState title="Select a payment" description="Pick the payment to refund from the list." />
           ) : (
             <form onSubmit={(e) => void onSubmit(e)} noValidate>
               <dl className="kv">

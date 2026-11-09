@@ -85,3 +85,23 @@ export async function fetchRecentRefunds(
   }
   return { rows, truncated: true };
 }
+
+/** GET /api/refunds/{id} for each id, at most `concurrency` requests in flight. */
+export async function fetchRefundDetails(
+  api: ApiClient,
+  ids: string[],
+  signal?: AbortSignal,
+  concurrency = 4,
+): Promise<RefundDetail[]> {
+  const r = refundsApi(api);
+  const out: RefundDetail[] = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < ids.length) {
+      const id = ids[next++]!;
+      out.push(await r.getRefund(id, signal));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, ids.length) }, worker));
+  return out;
+}

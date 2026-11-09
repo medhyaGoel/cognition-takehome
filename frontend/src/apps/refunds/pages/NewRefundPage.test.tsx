@@ -6,7 +6,7 @@ import { NewRefundPage } from "./NewRefundPage";
 
 const payment: Payment = {
   id: "11111111-1111-4111-a111-111111111111",
-  provider_ref: "pi_1001",
+  provider_ref: "ch_1001",
   customer_name: "Jane Doe",
   customer_email: "jane@customer.test",
   amount_cents: 10000,
@@ -26,8 +26,8 @@ function keyFactory() {
 }
 
 async function fillForm(amount: string) {
-  fireEvent.change(screen.getByPlaceholderText(/pi_1001/), { target: { value: "pi_1" } });
-  fireEvent.click(await screen.findByRole("button", { name: /pi_1001/ }));
+  fireEvent.change(screen.getByPlaceholderText(/ch_2003/), { target: { value: "ch_1" } });
+  fireEvent.click(await screen.findByRole("button", { name: /ch_1001/ }));
   await screen.findByTestId("refundable");
   fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: amount } });
   fireEvent.change(screen.getByRole("textbox", { name: /reason/i }), { target: { value: "Duplicate charge" } });
@@ -35,7 +35,7 @@ async function fillForm(amount: string) {
 
 function baseHandler(onCreate: (c: Call) => Response | Promise<Response>) {
   return (c: Call) => {
-    if (c.path.startsWith("/api/payments?")) return jsonResponse(200, [payment]);
+    if (c.path === "/api/payments" || c.path.startsWith("/api/payments?")) return jsonResponse(200, [payment]);
     if (c.path === `/api/payments/${payment.id}`) return jsonResponse(200, payment);
     if (c.path === "/api/refunds" && c.method === "POST") return onCreate(c);
     return jsonResponse(404, { error: { code: "not_found", message: "?" } });
@@ -45,6 +45,44 @@ function baseHandler(onCreate: (c: Call) => Response | Promise<Response>) {
 const posts = (calls: Call[]) => calls.filter((c) => c.method === "POST");
 
 describe("NewRefundPage", () => {
+  it("lists payments before anything is typed, with refundable amounts, and disables exhausted ones", async () => {
+    const exhausted: Payment = {
+      ...payment,
+      id: "33333333-3333-4333-a333-333333333333",
+      provider_ref: "ch_2003",
+      customer_name: "Ada Nakamura",
+      business_unit: "US",
+      reserved_cents: 0,
+      refunded_cents: 10000,
+      refundable_cents: 0,
+    };
+    const { calls } = renderWithApp(<NewRefundPage newKey={keyFactory()} />, {
+      persona: "alice",
+      handler: (c) => (c.path === "/api/payments" ? jsonResponse(200, [payment, exhausted]) : jsonResponse(404, {})),
+    });
+    const open = await screen.findByRole("button", { name: /Jane Doe/ });
+    expect(open.textContent).toContain("ch_1001");
+    expect(open.textContent).toContain("US");
+    expect(open.textContent).toContain("$100.00");
+    expect(open.textContent).toContain("$75.00 refundable");
+    expect((open as HTMLButtonElement).disabled).toBe(false);
+    const done = screen.getByRole("button", { name: /Ada Nakamura/ }) as HTMLButtonElement;
+    expect(done.disabled).toBe(true);
+    expect(done.textContent).toContain("Nothing refundable");
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(["GET /api/payments"]);
+    expect(screen.getByPlaceholderText("ch_2003 or Ada Nakamura")).toBeTruthy();
+  });
+
+  it("suggests searching by customer name or charge reference when nothing matches", async () => {
+    renderWithApp(<NewRefundPage newKey={keyFactory()} />, {
+      persona: "alice",
+      handler: (c) => (c.path.startsWith("/api/payments") ? jsonResponse(200, []) : jsonResponse(404, {})),
+    });
+    fireEvent.change(screen.getByPlaceholderText(/ch_2003/), { target: { value: "Medhya" } });
+    expect(await screen.findByText('No payments match "Medhya"')).toBeTruthy();
+    expect(screen.getByText(/Search by customer name .* or charge reference/)).toBeTruthy();
+  });
+
   it("sends integer cents parsed from the string input and shows the refundable amount", async () => {
     const { calls } = renderWithApp(<NewRefundPage newKey={keyFactory()} />, {
       persona: "alice",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { computeDashboard, median } from "./dashboard";
-import type { Refund } from "./types";
+import { approvedByHumans, computeDashboard, median, timeToApproveMs } from "./dashboard";
+import type { Approval, Refund, RefundDetail } from "./types";
 
 const NOW = Date.parse("2026-11-08T12:00:00Z");
 const H = 3600_000;
@@ -50,18 +50,17 @@ describe("computeDashboard", () => {
     expect(s.awaitingPayout).toEqual({ count: 4, totals: { USD: 1600 } });
     expect(s.refunded7d).toEqual({ count: 1, totals: { USD: 4000 } });
     expect(s.failed).toEqual({ count: 1, totals: { USD: 1013 } });
-    // required>0 and approved or later: 2h, 4h (approved), 0 (processing), 0 (failed), 1d (succeeded);
-    // auto-approved, pending and negative (bad fixture) durations excluded -> median 2h.
-    expect(s.timeToApproveSample).toBe(5);
-    expect(s.medianTimeToApproveMs).toBe(2 * H);
-    expect(s.timeToApproveExact).toBe(false);
   });
 
-  it("time-to-approve is exact when every sample is still awaiting payout", () => {
-    const s = computeDashboard(rows.slice(0, 6), { businessUnit: null, subject: "x", canApprove: false, now: NOW });
-    expect(s.timeToApproveSample).toBe(2);
-    expect(s.medianTimeToApproveMs).toBe(3 * H);
-    expect(s.timeToApproveExact).toBe(true);
+  it("time-to-approve candidates are human-approved refunds in any post-approval status", () => {
+    expect(approvedByHumans(rows).map((r) => r.status)).toEqual([
+      "approved",
+      "approved",
+      "processing",
+      "succeeded",
+      "succeeded",
+      "failed",
+    ]);
   });
 
   it("needs-my-attention excludes the user's own requests and non-pending refunds", () => {
@@ -87,5 +86,40 @@ describe("computeDashboard", () => {
     expect(median([])).toBeNull();
     expect(median([3, 1, 2])).toBe(2);
     expect(median([4, 1, 2, 3])).toBe(2.5);
+  });
+});
+
+describe("timeToApproveMs", () => {
+  const at = (h: number) => new Date(NOW + h * H).toISOString();
+  const approval = (h: number, decision: Approval["decision"] = "approved"): Approval => ({
+    approver: "bob@example.com",
+    decision,
+    comment: null,
+    created_at: at(h),
+  });
+  const detail = (over: Partial<RefundDetail>): RefundDetail => ({
+    ...refund({ created_at: at(0), updated_at: at(30) }),
+    approvals: [],
+    payment: {} as RefundDetail["payment"],
+    ...over,
+  });
+
+  it("uses the approval decision timestamp, not updated_at, for paid-out refunds", () => {
+    for (const status of ["approved", "processing", "succeeded", "failed"] as const) {
+      expect(timeToApproveMs(detail({ status, approvals: [approval(3)] }))).toBe(3 * H);
+    }
+  });
+
+  it("with multiple approvals required, uses the decision that met the requirement", () => {
+    const d = detail({ status: "succeeded", required_approvals: 2, approvals: [approval(5), approval(2)] });
+    expect(timeToApproveMs(d)).toBe(5 * H);
+  });
+
+  it("ignores rejections, auto-approvals, pending refunds and inconsistent timestamps", () => {
+    expect(timeToApproveMs(detail({ status: "rejected", approvals: [approval(1, "rejected")] }))).toBeNull();
+    expect(timeToApproveMs(detail({ status: "approved", required_approvals: 0 }))).toBeNull();
+    expect(timeToApproveMs(detail({ status: "pending_approval", approvals: [approval(1)] }))).toBeNull();
+    expect(timeToApproveMs(detail({ status: "approved", approvals: [approval(-1)] }))).toBeNull();
+    expect(timeToApproveMs(detail({ status: "approved", approvals: [] }))).toBeNull();
   });
 });
