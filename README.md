@@ -1,4 +1,4 @@
-# internal-tools-platform
+# Cognition Take-Home Demo
 
 A shared foundation for internal tools, plus a production-grade **refunds dashboard** built on it.
 It was built with Devin as a prototype for replacing Microsoft Power Apps at a fintech: Power Apps'
