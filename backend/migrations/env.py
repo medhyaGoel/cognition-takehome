@@ -10,7 +10,7 @@ if context.config.config_file_name is not None:
 
 
 def run_migrations_online() -> None:
-    url = context.config.attributes.get("database_url", settings.database_url)
+    url = context.config.attributes.get("database_url", settings.migration_database_url)
     engine = create_engine(url)
     with engine.connect() as connection:
         context.configure(connection=connection)

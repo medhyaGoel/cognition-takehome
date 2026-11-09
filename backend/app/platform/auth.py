@@ -1,13 +1,18 @@
-"""Authentication + role-based access control.
+"""Authentication (OIDC) + role-based access control.
 
-`decode_token` is the single seam for identity. In production it would verify an OIDC
-access token from the company IdP (RS256 via JWKS); in this prototype a dev-login endpoint
-issues HS256 tokens for a fixed directory of demo users.
+The API never handles passwords. Users sign in at the identity provider (Keycloak in local dev;
+Microsoft Entra ID / Google / Okta in production; same code, different OIDC_* settings) and the
+SPA sends the IdP-issued access token. We verify it locally: RS256 signature against the IdP's
+JWKS, issuer, audience, expiry, and a verified email.
+
+Claims used:
+  email           -> Principal.subject (human-readable actor in audit/RLS; must be verified)
+  roles           -> app roles (unknown values ignored)
+  groups "bu-xx"  -> business units the user may see (drives Postgres row-level security)
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -24,6 +29,9 @@ class Role:
 
 
 ALL_ROLES = frozenset({Role.VIEWER, Role.REFUND_AGENT, Role.REFUND_APPROVER, Role.FINANCE_ADMIN})
+BUSINESS_UNITS = frozenset({"US", "EU"})
+_BU_GROUP_PREFIX = "bu-"
+_ALGORITHMS = ["RS256"]
 
 
 @dataclass(frozen=True)
@@ -31,53 +39,53 @@ class Principal:
     subject: str
     display_name: str
     roles: frozenset[str]
+    business_units: frozenset[str]
 
     def has_any(self, *roles: str) -> bool:
         return bool(self.roles.intersection(roles))
 
 
-DEV_DIRECTORY: dict[str, tuple[str, frozenset[str]]] = {
-    "alice@example.com": ("Alice (Support Agent)", frozenset({Role.REFUND_AGENT})),
-    "bob@example.com": ("Bob (Approver)", frozenset({Role.REFUND_APPROVER})),
-    "carol@example.com": ("Carol (Approver)", frozenset({Role.REFUND_APPROVER})),
-    "dave@example.com": (
-        "Dave (Finance Admin)",
-        frozenset({Role.FINANCE_ADMIN, Role.REFUND_APPROVER}),
-    ),
-    "erin@example.com": ("Erin (Read-only)", frozenset({Role.VIEWER})),
-}
-
-_ALGORITHM = "HS256"
+_jwks_client = jwt.PyJWKClient(settings.oidc_jwks_url, cache_keys=True, lifespan=300, timeout=5)
 
 
-def issue_token(subject: str) -> str:
-    if subject not in DEV_DIRECTORY:
-        raise KeyError(subject)
-    display_name, roles = DEV_DIRECTORY[subject]
-    now = datetime.now(UTC)
-    claims = {
-        "sub": subject,
-        "name": display_name,
-        "roles": sorted(roles),
-        "iss": settings.jwt_issuer,
-        "aud": settings.jwt_audience,
-        "iat": now,
-        "exp": now + timedelta(seconds=settings.jwt_ttl_seconds),
-    }
-    return jwt.encode(claims, settings.jwt_secret, algorithm=_ALGORITHM)
+def _jwks_key_resolver(token: str):
+    return _jwks_client.get_signing_key_from_jwt(token).key
+
+
+_key_resolver: Callable[[str], object] = _jwks_key_resolver
+
+
+def set_key_resolver(resolver: Callable[[str], object]) -> None:
+    """Test seam: verify tokens against a locally generated key instead of the IdP's JWKS."""
+    global _key_resolver
+    _key_resolver = resolver
 
 
 def decode_token(token: str) -> Principal:
     claims = jwt.decode(
         token,
-        settings.jwt_secret,
-        algorithms=[_ALGORITHM],
-        audience=settings.jwt_audience,
-        issuer=settings.jwt_issuer,
+        _key_resolver(token),
+        algorithms=_ALGORITHMS,
+        audience=settings.oidc_audience,
+        issuer=settings.oidc_issuer,
+        leeway=30,
         options={"require": ["sub", "exp", "iat", "iss", "aud"]},
     )
+    email = claims.get("email")
+    if not isinstance(email, str) or not email or claims.get("email_verified") is not True:
+        raise jwt.InvalidTokenError("verified email claim required")
     roles = frozenset(r for r in claims.get("roles", []) if r in ALL_ROLES)
-    return Principal(subject=claims["sub"], display_name=claims.get("name", ""), roles=roles)
+    business_units = frozenset(
+        g.removeprefix(_BU_GROUP_PREFIX).upper()
+        for g in claims.get("groups", [])
+        if isinstance(g, str) and g.startswith(_BU_GROUP_PREFIX)
+    ).intersection(BUSINESS_UNITS)
+    return Principal(
+        subject=email.lower(),
+        display_name=claims.get("name", email),
+        roles=roles,
+        business_units=business_units,
+    )
 
 
 _bearer = HTTPBearer(auto_error=False)

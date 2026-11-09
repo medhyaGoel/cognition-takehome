@@ -25,7 +25,6 @@ jobs:
       run:
         working-directory: backend
     env:
-      TEST_DATABASE_URL: postgresql+psycopg://app:app@localhost:5432/app_test
       WORKFLOWS_PATH: ../config/workflows.yaml
     steps:
       - uses: actions/checkout@v4
