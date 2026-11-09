@@ -19,6 +19,7 @@ from app.platform.security import (
     install_log_redaction,
     internal_error_response,
     max_body_bytes,
+    security_headers,
 )
 from app.platform.workflows.router import router as workflows_router
 
@@ -44,12 +45,13 @@ async def request_id_middleware(request: Request, call_next):
     incoming = request.headers.get("X-Request-ID", "")
     valid = 0 < len(incoming) <= 64 and set(incoming) <= _REQUEST_ID_CHARS
     request_id = incoming if valid else str(uuid.uuid4())
+    request.state.request_id = request_id
     token = request_id_var.set(request_id)
     try:
         response = await call_next(request)
     except Exception:
         logger.exception("unhandled error request_id=%s path=%s", request_id, request.url.path)
-        response = internal_error_response()
+        raise  # -> unhandled_error_handler (generic 500); Starlette then re-raises for the server
     finally:
         request_id_var.reset(token)
     response.headers["X-Request-ID"] = request_id
@@ -68,10 +70,19 @@ async def domain_error_handler(_: Request, exc: DomainError) -> JSONResponse:
 
 
 @app.exception_handler(Exception)
-async def unhandled_error_handler(_: Request, exc: Exception) -> JSONResponse:
-    """Backstop for errors raised outside the request-id middleware (e.g. in outer middleware)."""
-    logger.error("unhandled error outside request scope: %s", type(exc).__name__)
-    return internal_error_response()
+async def unhandled_error_handler(request: Request | None, exc: Exception) -> JSONResponse:
+    """Generic 500 for anything unhandled. Runs in Starlette's outermost ServerErrorMiddleware,
+    outside the header middleware, so it sets the security headers and request id itself."""
+    response = internal_error_response()
+    path = request.url.path if request is not None else ""
+    for name, value in security_headers(path, production=settings.is_production):
+        response.headers[name.decode()] = value.decode()
+    request_id = getattr(request.state, "request_id", None) if request is not None else None
+    if request_id:
+        response.headers["X-Request-ID"] = request_id
+    else:
+        logger.error("unhandled error outside request scope: %s", type(exc).__name__)
+    return response
 
 
 @app.get("/healthz", tags=["platform"])

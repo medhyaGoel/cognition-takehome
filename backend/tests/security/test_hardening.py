@@ -162,6 +162,12 @@ def test_unhandled_errors_are_generic_500(boom_route, caplog, monkeypatch):
     assert any("req-123" in r.getMessage() and r.exc_info for r in caplog.records), caplog.records
 
 
+def test_unhandled_errors_still_propagate_to_the_server(boom_route):
+    """The generic body is sent, and the exception still reaches the server (and test clients)."""
+    with pytest.raises(RuntimeError):
+        TestClient(app).get(boom_route)
+
+
 def test_backstop_exception_handler_is_generic():
     response = asyncio.run(unhandled_error_handler(None, RuntimeError("leak me")))
     assert response.status_code == 500

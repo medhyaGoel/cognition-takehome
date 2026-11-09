@@ -4,14 +4,22 @@
 2. Every /api route has an entry in POLICY (transcribed from docs/api-contract.md), and the roles
    it declares in code match that entry exactly.
 3. Every registered POLICY route x every persona: disallowed -> 403, allowed -> not 401/403.
-4. Missing/forged/expired/mis-scoped tokens -> 401; IdP key outage -> 503, never 500.
+4. Route x persona x business unit, on real rows: allowed roles reach rows in their business
+   units (2xx) and get 404 (with no side effect) outside them; list routes only return the
+   caller's business units. Every registered route must declare how it is BU-scoped.
+5. Missing/forged/expired/mis-scoped tokens -> 401; IdP key outage -> 503, never 500.
+
+Routes are enumerated through FastAPI's route contexts, so routes inside included routers
+(and include-level dependencies) are seen exactly as they are served.
 
 POLICY entries whose route isn't registered yet are skipped; STRICT_POLICY=1 makes them fail.
 """
 
 import base64
+import csv
 import hashlib
 import hmac
+import io
 import json
 import os
 import re
@@ -23,8 +31,9 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from fastapi import Depends, FastAPI
-from fastapi.routing import APIRoute
+from fastapi import APIRouter, Depends, FastAPI
+from fastapi.dependencies.utils import get_dependant
+from fastapi.routing import APIRoute, RouteContext, iter_route_contexts
 from starlette.routing import BaseRoute, Route
 
 from app.main import app
@@ -71,14 +80,14 @@ def normalise(path: str) -> str:
     return re.sub(r"\{[^}]+\}", "{}", path)
 
 
-def api_endpoints(routes: list[BaseRoute]) -> Iterator[tuple[str, str, BaseRoute]]:
-    for route in routes:
-        path = getattr(route, "path", "")
+def api_endpoints(routes: list[BaseRoute]) -> Iterator[tuple[str, str, RouteContext]]:
+    for ctx in iter_route_contexts(routes):
+        path = ctx.path or ""
         if not path.startswith("/api"):
             continue
-        methods = getattr(route, "methods", None) or {"*"}
+        methods = set(ctx.methods or ()) or {"*"}
         for method in sorted(methods - {"HEAD", "OPTIONS"}):
-            yield method, normalise(path), route
+            yield method, normalise(path), ctx
 
 
 def _dependency_calls(dependant) -> Iterator[object]:
@@ -87,9 +96,15 @@ def _dependency_calls(dependant) -> Iterator[object]:
         yield from _dependency_calls(dep)
 
 
-def declared_roles(route: APIRoute) -> frozenset[str] | None:
+def declared_roles(ctx: RouteContext) -> frozenset[str] | None:
     """None = no authentication. ANY_AUTHENTICATED = get_principal without a role check."""
+    route = ctx.original_route
+    if not isinstance(route, APIRoute):
+        return None
     calls = list(_dependency_calls(route.dependant))
+    for dep in getattr(ctx, "dependencies", None) or ():
+        calls.append(dep.dependency)
+        calls.extend(_dependency_calls(get_dependant(path=ctx.path, call=dep.dependency)))
     if get_principal not in calls:
         return None
     role_sets = [c.required_roles for c in calls if hasattr(c, "required_roles")]
@@ -99,13 +114,11 @@ def declared_roles(route: APIRoute) -> frozenset[str] | None:
 
 
 def unprotected_routes(routes: list[BaseRoute]) -> list[str]:
-    bad = []
-    for method, path, route in api_endpoints(routes):
-        if (method, path) in PUBLIC:
-            continue
-        if not isinstance(route, APIRoute) or declared_roles(route) is None:
-            bad.append(f"{method} {path}")
-    return bad
+    return [
+        f"{method} {path}"
+        for method, path, ctx in api_endpoints(routes)
+        if (method, path) not in PUBLIC and declared_roles(ctx) is None
+    ]
 
 
 def routes_missing_policy(routes: list[BaseRoute]) -> list[str]:
@@ -155,12 +168,51 @@ def test_checks_detect_unprotected_and_undeclared_routes():
         return {}
 
     probe.router.routes.append(Route("/api/raw", lambda r: None))
-    assert unprotected_routes(probe.routes) == ["GET /api/leaky", "GET /api/raw"]
+
+    nested = APIRouter(prefix="/nested")
+
+    @nested.get("/leaky")
+    def nested_leaky():
+        return {}
+
+    guarded = APIRouter()
+
+    @guarded.get("/guarded")
+    def guarded_route():
+        return {}
+
+    outer = APIRouter(prefix="/api")
+    outer.include_router(nested)
+    probe.include_router(outer)
+    probe.include_router(
+        guarded, prefix="/api", dependencies=[Depends(require_roles(Role.FINANCE_ADMIN))]
+    )
+
+    assert unprotected_routes(probe.routes) == [
+        "GET /api/leaky",
+        "GET /api/raw",
+        "GET /api/nested/leaky",
+    ]
     assert routes_missing_policy(probe.routes) == [
         "GET /api/leaky",
         "GET /api/new-thing",
         "GET /api/raw",
+        "GET /api/nested/leaky",
+        "GET /api/guarded",
     ]
+    (guarded_ctx,) = [c for m, p, c in api_endpoints(probe.routes) if p == "/api/guarded"]
+    assert declared_roles(guarded_ctx) == {Role.FINANCE_ADMIN}
+
+    from fastapi.testclient import TestClient
+
+    probe_client = TestClient(probe)
+    assert probe_client.get("/api/guarded").status_code == 401
+    assert probe_client.get("/api/guarded", headers=auth_headers("bob")).status_code == 403
+    assert probe_client.get("/api/guarded", headers=auth_headers("dave")).status_code == 200
+
+
+def test_refund_routes_are_seen_through_included_routers():
+    assert {("POST", "/api/refunds"), ("GET", "/api/refunds/export.csv")} <= REGISTERED.keys()
 
 
 def _not_registered(key):
@@ -208,7 +260,134 @@ def test_roleless_identity_is_forbidden_on_role_gated_routes(client):
         assert status == expected or (expected == 200 and status not in (401, 403)), key
 
 
-# --- 4: token validation --------------------------------------------------------------------
+# --- 4: route x persona x business unit, on real rows ---------------------------------------
+
+BU_OF_GROUP = {"bu-us": "US", "bu-eu": "EU"}
+BUSINESS_UNITS = ("US", "EU")
+# Requester per BU: an agent who is not an approver, so every approver can decide its refunds.
+REQUESTER = {"US": "alice", "EU": "frank"}
+ROW_SCOPED: dict[tuple[str, str], object] = {
+    ("GET", "/api/payments/{}"): lambda t: ("GET", f"/api/payments/{t['payment']}", None),
+    ("POST", "/api/refunds"): lambda t: (
+        "POST",
+        "/api/refunds",
+        {"payment_id": t["payment"], "amount_cents": 100, "reason": "bu matrix"},
+    ),
+    ("GET", "/api/refunds/{}"): lambda t: ("GET", f"/api/refunds/{t['refund']}", None),
+    ("GET", "/api/refunds/{}/audit"): lambda t: (
+        "GET",
+        f"/api/refunds/{t['refund']}/audit",
+        None,
+    ),
+    ("POST", "/api/refunds/{}/approve"): lambda t: (
+        "POST",
+        f"/api/refunds/{t['refund']}/approve",
+        {"expected_version": 1},
+    ),
+    ("POST", "/api/refunds/{}/reject"): lambda t: (
+        "POST",
+        f"/api/refunds/{t['refund']}/reject",
+        {"expected_version": 1, "reason": "bu matrix"},
+    ),
+}
+# List route -> (id field, target key) used to check the caller's own rows are present.
+LIST_SCOPED: dict[tuple[str, str], tuple[str, str] | None] = {
+    ("GET", "/api/payments"): ("id", "payment"),
+    ("GET", "/api/refunds"): ("id", "refund"),
+    ("GET", "/api/refunds/export.csv"): ("refund_id", "refund"),
+    ("GET", "/api/notifications"): None,
+}
+BU_NEUTRAL = {("GET", "/api/me"), ("GET", "/api/workflows/rules")}
+
+
+def persona_bus(persona: str) -> set[str]:
+    return {BU_OF_GROUP[g] for g in PERSONAS[persona][1]}
+
+
+def role_allowed(key, persona) -> bool:
+    return POLICY[key] == ANY_AUTHENTICATED or bool(POLICY[key] & set(PERSONAS[persona][0]))
+
+
+@pytest.fixture
+def bu_targets(client, make_payment):
+    """One payment + one pending refund in each business unit, created through the API."""
+    targets = {}
+    for bu in BUSINESS_UNITS:
+        payment = str(make_payment(amount_cents=10_000, business_unit=bu))
+        r = client.post(
+            "/api/refunds",
+            headers={**auth_headers(REQUESTER[bu]), "Idempotency-Key": uuid.uuid4().hex},
+            json={"payment_id": payment, "amount_cents": 100, "reason": "bu matrix target"},
+        )
+        assert r.status_code == 201, r.text
+        targets[bu] = {"payment": payment, "refund": r.json()["id"]}
+    return targets
+
+
+def _state(client, target) -> tuple:
+    dave = auth_headers("dave")
+    refund = client.get(f"/api/refunds/{target['refund']}", headers=dave).json()
+    payment = client.get(f"/api/payments/{target['payment']}", headers=dave).json()
+    return refund["status"], refund["version"], payment["reserved_cents"]
+
+
+def test_every_registered_route_declares_business_unit_scoping():
+    undeclared = [
+        f"{m} {p}"
+        for m, p in REGISTERED
+        if (m, p) not in PUBLIC
+        and (m, p) not in ROW_SCOPED
+        and (m, p) not in LIST_SCOPED
+        and (m, p) not in BU_NEUTRAL
+    ]
+    assert undeclared == [], "add the route to ROW_SCOPED, LIST_SCOPED or BU_NEUTRAL"
+
+
+@pytest.mark.parametrize("bu", BUSINESS_UNITS)
+@pytest.mark.parametrize("persona", sorted(PERSONAS))
+@pytest.mark.parametrize("key", sorted(ROW_SCOPED), ids=lambda k: f"{k[0]} {k[1]}")
+def test_business_unit_matrix(client, bu_targets, key, persona, bu):
+    if key not in REGISTERED:
+        _not_registered(key)
+    target = bu_targets[bu]
+    method, url, body = ROW_SCOPED[key](target)
+    before = _state(client, target)
+    headers = {**auth_headers(persona), "Idempotency-Key": uuid.uuid4().hex}
+    response = client.request(method, url, headers=headers, json=body)
+    if not role_allowed(key, persona):
+        assert response.status_code == 403, response.text
+    elif bu in persona_bus(persona):
+        assert response.status_code in (200, 201), response.text
+        return
+    else:
+        assert response.status_code == 404, response.text
+        assert response.json()["error"]["code"] == "not_found"
+    assert _state(client, target) == before, "a denied request changed state"
+
+
+@pytest.mark.parametrize("persona", sorted(PERSONAS))
+@pytest.mark.parametrize("key", sorted(LIST_SCOPED), ids=lambda k: f"{k[0]} {k[1]}")
+def test_list_routes_return_only_callers_business_units(client, bu_targets, key, persona):
+    if key not in REGISTERED:
+        _not_registered(key)
+    response = client.get(REGISTERED[key].path_format, headers=auth_headers(persona))
+    if not role_allowed(key, persona):
+        assert response.status_code == 403, response.text
+        return
+    assert response.status_code == 200, response.text
+    if response.headers["content-type"].startswith("text/csv"):
+        rows = list(csv.DictReader(io.StringIO(response.text)))
+    else:
+        rows = response.json()
+    assert {row["business_unit"] for row in rows} <= persona_bus(persona)
+    if LIST_SCOPED[key] is not None:
+        id_field, target_key = LIST_SCOPED[key]
+        ids = {str(row[id_field]) for row in rows}
+        for bu, target in bu_targets.items():
+            assert (target[target_key] in ids) == (bu in persona_bus(persona)), (bu, rows)
+
+
+# --- 5: token validation --------------------------------------------------------------------
 
 
 def _b64(data: bytes) -> str:
