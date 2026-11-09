@@ -29,6 +29,7 @@ def test_overdue_refund_escalates_once_per_window(make_refund, outbox_rows, owne
     assert all(r["payload"]["entity_id"] == str(rid) for r in rows)
     assert all(r["dedupe_key"].startswith(f"schedule:refund-approval-sla:{rid}:w1:") for r in rows)
     assert rows[0]["payload"]["title"] == "SLA breached: refund $25.00 USD · US"
+    assert rows[0]["payload"]["data"]["reason"] == "customer request"
     assert run() == 0 and len(outbox_rows()) == 3  # same window: deduped
     with owner_engine.connect() as conn:
         escalated = conn.execute(

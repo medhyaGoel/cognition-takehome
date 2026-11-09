@@ -20,6 +20,7 @@ _OVERDUE_REFUNDS = text(
     """
     SELECT * FROM (
         SELECT id, payment_id, business_unit, amount_cents, currency, status, requested_by,
+               reason,
                created_at, escalated_at,
                floor(extract(epoch FROM now() - created_at) / (:sla * 60))::int AS sla_window,
                floor(extract(epoch FROM now() - created_at) / 60)::int AS age_minutes
@@ -54,6 +55,7 @@ def refund_sla_escalation(db: Session, params: Mapping[str, Any]) -> list[Schedu
             "currency": r.currency,
             "status": r.status,
             "requested_by": r.requested_by,
+            "reason": r.reason,
             "payment_id": str(r.payment_id),
             "business_unit": r.business_unit,
             "age_minutes": r.age_minutes,
