@@ -44,13 +44,16 @@ def test_notifications_rls_scoped(client, db_as, monkeypatch):
         assert resp.status_code == 200
         return [n["business_unit"] for n in resp.json()]
 
+    def finance(business_unit: str) -> dict[str, str]:
+        token = make_token("eve@example.com", ["finance_admin"], [business_unit])
+        return {"Authorization": "Bearer " + token}
+
     assert sorted(bus(auth_headers("dave"))) == ["EU", "US"]
-    assert bus(auth_headers("bob")) == ["US"]
-    eu_only = {
-        "Authorization": "Bearer " + make_token("eve@example.com", ["refund_approver"], ["bu-eu"])
-    }
-    assert bus(eu_only) == ["EU"]
-    (n,) = client.get("/api/notifications", headers=auth_headers("bob")).json()
+    assert bus(finance("bu-eu")) == ["EU"]
+    assert bus(finance("bu-us")) == ["US"]
+    # payments-oncall is addressed to finance_admin: approvers in the same BU don't see it.
+    assert bus(auth_headers("bob")) == []
+    (n,) = client.get("/api/notifications", headers=finance("bu-us")).json()
     assert set(n) == {
         "id",
         "created_at",

@@ -31,6 +31,7 @@ def test_created_event_and_default_required_approvals(client, make_payment, even
         "requested_by": "frank@example.com",
         "payment_id": str(payment),
         "business_unit": "EU",
+        "reason": "duplicate",
     }
 
 

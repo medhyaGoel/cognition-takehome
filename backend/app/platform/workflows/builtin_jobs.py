@@ -16,22 +16,23 @@ WORKER_ACTOR = "system:worker"  # == app.db.WORKER_ACTOR (not imported to avoid 
 # Overdue = pending_approval for at least one SLA period. Window n covers ages
 # [n*sla, (n+1)*sla); each refund escalates at most once per window. `escalated_at` only
 # pre-filters (so a backlog can't starve the batch); the outbox dedupe_key is the guarantee.
+# FOR UPDATE SKIP LOCKED: the rows stay pending_approval until the escalation commits (approve and
+# reject lock the refund first), and refunds mid-decision are skipped instead of escalated.
 _OVERDUE_REFUNDS = text(
     """
-    SELECT * FROM (
-        SELECT id, payment_id, business_unit, amount_cents, currency, status, requested_by,
-               reason,
-               created_at, escalated_at,
-               floor(extract(epoch FROM now() - created_at) / (:sla * 60))::int AS sla_window,
-               floor(extract(epoch FROM now() - created_at) / 60)::int AS age_minutes
-        FROM refunds
-        WHERE status = 'pending_approval'
-          AND created_at <= now() - make_interval(mins => :sla)
-    ) r
-    WHERE r.escalated_at IS NULL
-       OR r.escalated_at < r.created_at + make_interval(mins => :sla * r.sla_window)
-    ORDER BY r.created_at, r.id
+    SELECT id, payment_id, business_unit, amount_cents, currency, status, requested_by, reason,
+           created_at, escalated_at,
+           floor(extract(epoch FROM now() - created_at) / (:sla * 60))::int AS sla_window,
+           floor(extract(epoch FROM now() - created_at) / 60)::int AS age_minutes
+    FROM refunds
+    WHERE status = 'pending_approval'
+      AND created_at <= now() - make_interval(mins => :sla)
+      AND (escalated_at IS NULL
+           OR escalated_at < created_at + make_interval(
+               mins => :sla * floor(extract(epoch FROM now() - created_at) / (:sla * 60))::int))
+    ORDER BY created_at, id
     LIMIT :limit
+    FOR UPDATE SKIP LOCKED
     """
 )
 
