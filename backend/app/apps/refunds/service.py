@@ -95,6 +95,7 @@ def emit(
         "requested_by": r["requested_by"],
         "payment_id": str(r["payment_id"]),
         "business_unit": r["business_unit"],
+        "reason": r["reason"],
         **extra,
     }
     return workflows.on_event(
