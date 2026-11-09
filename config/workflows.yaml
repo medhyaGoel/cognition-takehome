@@ -20,6 +20,12 @@ channels:
     recipient_role: finance_admin
     email_to: [oncall@example.com]
     email_subject_prefix: Refund failed
+  flag-approvals:
+    description: Prod feature-flag change requests waiting for a flag approver.
+    adapters: [in_app, email]
+    recipient_role: flag_approver
+    email_to: [flag-approvers@example.com]
+    email_subject_prefix: Flag change needs approval
   refunds-activity:
     description: Low-urgency activity feed.
     adapters: [in_app, log]
@@ -28,6 +34,7 @@ channels:
 # Deep links used by email notifications (WEB_BASE_URL + path).
 links:
   refund: /refunds/{id}
+  flag_change_request: /feature-flags
 
 rules:
   - id: refund-small-auto-approve
@@ -68,6 +75,17 @@ rules:
           channel: refunds-activity
           title: "Refund {amount_display} · {business_unit} paid out"
           template: "A refund of {amount_display} on payment {payment_id} was paid out."
+
+  - id: flag-prod-change-needs-approval
+    description: Prod feature-flag changes need a second person; notify flag approvers.
+    on: flag.change_requested
+    conditions:
+      - {field: environment, op: eq, value: prod}
+    actions:
+      - notify:
+          channel: flag-approvals
+          title: "Flag {flag_key} → {state} in prod · {business_unit}"
+          template: "A request to turn {flag_key} {state} in prod ({business_unit}) is waiting for approval."
 
 schedules:
   - id: refund-approval-sla

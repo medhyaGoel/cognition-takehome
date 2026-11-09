@@ -210,3 +210,22 @@ def test_concurrent_dev_toggles_one_wins(client):
     assert _state(client, "EU", "staging", "refund_auto_approve_v2")["version"] == (
         state["version"] + 1
     )
+
+
+def test_prod_request_notifies_flag_approvers(client, owner_engine):
+    state = _state(client, "EU", "prod", "new_kyc_flow")
+    assert _toggle(client, "frank", state).status_code == 201
+    with owner_engine.connect() as conn:
+        n = conn.scalar(
+            text("SELECT count(*) FROM outbox WHERE payload::text LIKE '%flag-approvals%'")
+        )
+    assert n >= 2  # in_app + email
+
+
+def test_dev_toggle_does_not_notify_approvers(client, owner_engine):
+    assert _toggle(client, "alice", _state(client, "US", "dev", "new_kyc_flow")).status_code == 201
+    with owner_engine.connect() as conn:
+        n = conn.scalar(
+            text("SELECT count(*) FROM outbox WHERE payload::text LIKE '%flag-approvals%'")
+        )
+    assert n == 0
