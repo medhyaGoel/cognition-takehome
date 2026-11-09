@@ -14,11 +14,11 @@ TEST_PUBLIC_KEY = TEST_PRIVATE_KEY.public_key()
 
 # Mirrors the realm users: name -> (roles, business-unit groups)
 PERSONAS: dict[str, tuple[list[str], list[str]]] = {
-    "alice": (["refund_agent"], ["bu-us"]),
-    "frank": (["refund_agent"], ["bu-eu"]),
+    "alice": (["refund_agent", "flag_editor"], ["bu-us"]),
+    "frank": (["refund_agent", "flag_editor"], ["bu-eu"]),
     "bob": (["refund_approver"], ["bu-us"]),
-    "carol": (["refund_approver"], ["bu-us", "bu-eu"]),
-    "dave": (["finance_admin", "refund_approver"], ["bu-us", "bu-eu"]),
+    "carol": (["refund_approver", "flag_approver"], ["bu-us", "bu-eu"]),
+    "dave": (["finance_admin", "refund_approver", "flag_approver"], ["bu-us", "bu-eu"]),
     "erin": (["viewer"], ["bu-us"]),
 }
 

@@ -32,7 +32,15 @@ from app.config import settings  # noqa: E402
 from app.platform import auth  # noqa: E402
 from tests.helpers import TEST_PUBLIC_KEY, auth_headers, principal_for  # noqa: E402, F401
 
-TABLES = ["notifications", "refund_approvals", "refunds", "payments", "audit_log", "outbox"]
+TABLES = [
+    "flag_change_requests",
+    "notifications",
+    "refund_approvals",
+    "refunds",
+    "payments",
+    "audit_log",
+    "outbox",
+]
 _SOURCE_SQL = pathlib.Path(__file__).resolve().parents[2] / "source-db" / "init.sql"
 
 

@@ -46,6 +46,7 @@ ANY_AUTHENTICATED = frozenset({"*"})
 ALL_READ = frozenset({Role.VIEWER, Role.REFUND_AGENT, Role.REFUND_APPROVER, Role.FINANCE_ADMIN})
 MAKERS = frozenset({Role.REFUND_AGENT, Role.FINANCE_ADMIN})
 CHECKERS = frozenset({Role.REFUND_APPROVER, Role.FINANCE_ADMIN})
+FLAG_READ = ALL_READ | {Role.FLAG_EDITOR, Role.FLAG_APPROVER}
 
 # (method, path with params normalised to {}) -> roles. Source: docs/api-contract.md.
 POLICY: dict[tuple[str, str], frozenset[str]] = {
@@ -61,6 +62,12 @@ POLICY: dict[tuple[str, str], frozenset[str]] = {
     ("GET", "/api/refunds/export.csv"): frozenset({Role.FINANCE_ADMIN}),
     ("GET", "/api/workflows/rules"): ALL_READ,
     ("GET", "/api/notifications"): frozenset({Role.FINANCE_ADMIN, Role.REFUND_APPROVER}),
+    ("GET", "/api/flags"): FLAG_READ,
+    ("GET", "/api/flags/change-requests"): FLAG_READ,
+    ("POST", "/api/flags/states/{}/toggle"): frozenset({Role.FLAG_EDITOR}),
+    ("GET", "/api/flags/states/{}/audit"): FLAG_READ,
+    ("POST", "/api/flags/change-requests/{}/approve"): frozenset({Role.FLAG_APPROVER}),
+    ("POST", "/api/flags/change-requests/{}/reject"): frozenset({Role.FLAG_APPROVER}),
 }
 
 PROBE_BODIES: dict[tuple[str, str], dict] = {
@@ -71,6 +78,9 @@ PROBE_BODIES: dict[tuple[str, str], dict] = {
     },
     ("POST", "/api/refunds/{}/approve"): {"expected_version": 1, "comment": "probe"},
     ("POST", "/api/refunds/{}/reject"): {"expected_version": 1, "reason": "probe"},
+    ("POST", "/api/flags/states/{}/toggle"): {"enabled": True, "expected_version": 1},
+    ("POST", "/api/flags/change-requests/{}/approve"): {"expected_version": 1},
+    ("POST", "/api/flags/change-requests/{}/reject"): {"expected_version": 1, "reason": "probe"},
 }
 
 STRICT = os.environ.get("STRICT_POLICY") == "1"
@@ -289,6 +299,26 @@ ROW_SCOPED: dict[tuple[str, str], object] = {
         f"/api/refunds/{t['refund']}/reject",
         {"expected_version": t["version"], "reason": "bu matrix"},
     ),
+    ("POST", "/api/flags/states/{}/toggle"): lambda t: (
+        "POST",
+        f"/api/flags/states/{t['flag_state']}/toggle",
+        {"enabled": not t["flag_enabled"], "expected_version": t["flag_version"]},
+    ),
+    ("GET", "/api/flags/states/{}/audit"): lambda t: (
+        "GET",
+        f"/api/flags/states/{t['flag_state']}/audit",
+        None,
+    ),
+    ("POST", "/api/flags/change-requests/{}/approve"): lambda t: (
+        "POST",
+        f"/api/flags/change-requests/{t['change_request']}/approve",
+        {"expected_version": 1},
+    ),
+    ("POST", "/api/flags/change-requests/{}/reject"): lambda t: (
+        "POST",
+        f"/api/flags/change-requests/{t['change_request']}/reject",
+        {"expected_version": 1, "reason": "bu matrix"},
+    ),
 }
 # List route -> (id field, target key) used to check the caller's own rows are present.
 LIST_SCOPED: dict[tuple[str, str], tuple[str, str] | None] = {
@@ -296,6 +326,8 @@ LIST_SCOPED: dict[tuple[str, str], tuple[str, str] | None] = {
     ("GET", "/api/refunds"): ("id", "refund"),
     ("GET", "/api/refunds/export.csv"): ("refund_id", "refund"),
     ("GET", "/api/notifications"): None,
+    ("GET", "/api/flags"): ("id", "flag_state"),
+    ("GET", "/api/flags/change-requests"): ("id", "change_request"),
 }
 BU_NEUTRAL = {("GET", "/api/me"), ("GET", "/api/workflows/rules")}
 
@@ -324,7 +356,28 @@ def bu_targets(client, make_payment):
         refund = r.json()
         assert refund["status"] == "pending_approval", refund
         targets[bu] = {"payment": payment, "refund": refund["id"], "version": refund["version"]}
+        targets[bu].update(_flag_targets(client, bu))
     return targets
+
+
+def _flag_targets(client, bu: str) -> dict:
+    """A dev flag state to toggle and a pending prod change request (by the BU's editor)."""
+    states = client.get("/api/flags", headers=auth_headers("dave")).json()
+    in_bu = [s for s in states if s["business_unit"] == bu]
+    dev = next(s for s in in_bu if s["environment"] == "dev")
+    prod = next(s for s in in_bu if s["environment"] == "prod")
+    r = client.post(
+        f"/api/flags/states/{prod['id']}/toggle",
+        headers={**auth_headers(REQUESTER[bu]), "Idempotency-Key": uuid.uuid4().hex},
+        json={"enabled": not prod["enabled"], "expected_version": prod["version"]},
+    )
+    assert r.status_code == 201, r.text
+    return {
+        "flag_state": dev["id"],
+        "flag_enabled": dev["enabled"],
+        "flag_version": dev["version"],
+        "change_request": r.json()["id"],
+    }
 
 
 def _state(client, target) -> tuple:

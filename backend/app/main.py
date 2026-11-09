@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from app.apps.flags.router import router as flags_router
 from app.apps.refunds.router import router as refunds_router
 from app.config import settings
 from app.platform.auth import Principal, get_principal
@@ -127,3 +128,4 @@ def me(principal: Principal = Depends(get_principal)) -> MeResponse:
 
 app.include_router(refunds_router)
 app.include_router(workflows_router)
+app.include_router(flags_router)
