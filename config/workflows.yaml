@@ -1,3 +1,83 @@
 # Declarative workflow rules (Power Automate equivalent). Changes go through PR review.
-# Schema and engine: backend/app/platform/workflows/. Placeholder until the engine lands.
-rules: []
+# Schema, validation and semantics: backend/app/platform/workflows/config.py and engine.py.
+#   - conditions are ANDed; ops: eq ne gt gte lt lte in; no expressions, nothing is evaluated.
+#   - required approvals: the strictest (max) matching rule wins; any rule requiring
+#     approvals overrides auto_approve.
+#   - templates: {field} placeholders from the event's data only.
+# Money is integer minor units (amount_cents). Never put emails or other PII in templates.
+version: 1
+
+channels:
+  finance-approvals:
+    description: Approvers' queue. Webhook goes to Teams/Slack when NOTIFY_WEBHOOK_URL is set (else log).
+    adapters: [in_app, webhook, email]
+    recipient_role: refund_approver
+    email_to: [finance@example.com]
+    email_subject_prefix: Approval needed
+  payments-oncall:
+    description: Payments on-call (failed provider calls).
+    adapters: [in_app, webhook, email]
+    recipient_role: finance_admin
+    email_to: [oncall@example.com]
+    email_subject_prefix: Refund failed
+  refunds-activity:
+    description: Low-urgency activity feed.
+    adapters: [in_app, log]
+    recipient_role: finance_admin
+
+# Deep links used by email notifications (WEB_BASE_URL + path).
+links:
+  refund: /refunds/{id}
+
+rules:
+  - id: refund-small-auto-approve
+    description: Refunds of 5000 minor units (e.g. $50.00) or less are auto-approved.
+    on: refund.created
+    conditions:
+      - {field: amount_cents, op: lte, value: 5000}
+    actions:
+      - set_required_approvals: {count: 0}
+      - auto_approve: {}
+
+  - id: refund-large-two-approvals
+    description: Refunds above 50000 minor units (e.g. $500.00) need two approvers.
+    on: refund.created
+    conditions:
+      - {field: amount_cents, op: gt, value: 50000}
+    actions:
+      - set_required_approvals: {count: 2}
+      - notify:
+          channel: finance-approvals
+          title: "Refund {amount_display} · {business_unit}"
+          template: "A refund of {amount_display} on payment {payment_id} is waiting for two approvals."
+
+  - id: refund-failed-page-oncall
+    description: Provider refund failures page payments on-call.
+    on: refund.failed
+    actions:
+      - notify:
+          channel: payments-oncall
+          title: "Refund {amount_display} · {business_unit}"
+          template: "A refund of {amount_display} on payment {payment_id} failed at the payment provider and needs attention."
+
+  - id: refund-succeeded-activity
+    description: Successful refunds go to the activity feed.
+    on: refund.succeeded
+    actions:
+      - notify:
+          channel: refunds-activity
+          title: "Refund {amount_display} · {business_unit} paid out"
+          template: "A refund of {amount_display} on payment {payment_id} was paid out."
+
+schedules:
+  - id: refund-approval-sla
+    description: Escalate refunds waiting for approval longer than the SLA, once per SLA window.
+    job: refund_sla_escalation
+    every_seconds: 60
+    params:
+      sla_minutes: 60
+    actions:
+      - notify:
+          channel: finance-approvals
+          title: "SLA breached: refund {amount_display} · {business_unit}"
+          template: "Refund {refund_id} ({amount_display}) has been pending approval for {age_minutes} minutes (SLA {sla_minutes} minutes)."

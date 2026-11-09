@@ -89,12 +89,29 @@ services:
   worker:
     build: ./backend
     command: ["python", "-m", "app.worker"]
-    environment: *backend-env
+    environment:
+      <<: *backend-env
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_FROM: internal-tools@example.com
+      SMTP_USE_TLS: "false"
+      WEB_BASE_URL: http://localhost:5173
+      # Slack/Teams incoming webhook: export it in your shell or .env; never commit it.
+      NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL:-}
     volumes:
       - ./config:/config:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
+      mailpit:
+        condition: service_started
+
+  # Local SMTP sink for email notifications. Web UI: http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:v1.27.10
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
 
 volumes:
   pgdata:
