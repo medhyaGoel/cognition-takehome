@@ -1,0 +1,3 @@
+# Declarative workflow rules (Power Automate equivalent). Changes go through PR review.
+# Schema and engine: backend/app/platform/workflows/. Placeholder until the engine lands.
+rules: []
