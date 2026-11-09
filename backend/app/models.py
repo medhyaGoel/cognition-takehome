@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -109,3 +109,45 @@ class Notification(Base):
     entity_type: Mapped[str | None] = mapped_column(Text)
     entity_id: Mapped[str | None] = mapped_column(Text)
     outbox_id: Mapped[int | None] = mapped_column(ForeignKey("outbox.id"), unique=True)
+
+
+class FeatureFlag(Base):
+    __tablename__ = "feature_flags"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    description: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FlagState(Base):
+    __tablename__ = "flag_states"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    flag_key: Mapped[str] = mapped_column(ForeignKey("feature_flags.key"))
+    business_unit: Mapped[str] = mapped_column(Text)
+    environment: Mapped[str] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_by: Mapped[str | None] = mapped_column(Text)
+
+
+class FlagChangeRequest(Base):
+    __tablename__ = "flag_change_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    flag_state_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("flag_states.id"))
+    flag_key: Mapped[str] = mapped_column(Text)
+    business_unit: Mapped[str] = mapped_column(Text)
+    environment: Mapped[str] = mapped_column(Text)
+    desired_enabled: Mapped[bool] = mapped_column(Boolean)
+    expected_version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(Text)
+    requested_by: Mapped[str] = mapped_column(Text)
+    idempotency_key: Mapped[str] = mapped_column(Text)
+    request_hash: Mapped[str] = mapped_column(Text)
+    decided_by: Mapped[str | None] = mapped_column(Text)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decision_reason: Mapped[str | None] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

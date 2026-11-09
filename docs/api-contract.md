@@ -19,7 +19,8 @@ Errors (all non-2xx from domain logic):
 | 422 | `validation_failed` or FastAPI validation | bad input |
 
 ## Roles and business units
-Roles: `viewer`, `refund_agent`, `refund_approver`, `finance_admin` (token claim `roles`).
+Roles: `viewer`, `refund_agent`, `refund_approver`, `finance_admin`, `flag_editor`,
+`flag_approver` (token claim `roles`).
 Business units: `US`, `EU` (token claim `groups`: `bu-us`, `bu-eu`). Row-level security limits
 every read and write to the caller's business units (Dataverse business-units equivalent):
 rows outside them are invisible, so their ids return **404**, not 403.
@@ -27,11 +28,11 @@ rows outside them are invisible, so their ids return **404**, not 403.
 Demo users (password `demo-password`, local Keycloak only):
 | user | roles | business units |
 |---|---|---|
-| alice | refund_agent | US |
-| frank | refund_agent | EU |
+| alice | refund_agent, flag_editor | US |
+| frank | refund_agent, flag_editor | EU |
 | bob | refund_approver | US |
-| carol | refund_approver | US, EU |
-| dave | finance_admin, refund_approver | US, EU |
+| carol | refund_approver, flag_approver | US, EU |
+| dave | finance_admin, refund_approver, flag_approver | US, EU |
 | erin | viewer | US |
 Subjects are emails (`alice@example.com`).
 
@@ -90,6 +91,24 @@ pending_approval --approve (enough approvals)--> approved --worker--> processing
   `approved → processing` (commit) → provider call with idempotency key = refund id →
   `succeeded|failed` (commit). Stuck `processing` rows are reconciled by re-calling the
   (idempotent) provider.
+
+## Feature flags
+`FLAG_READ` = every role. One `flag_states` row per flag × business unit × environment
+(`dev`, `staging`, `prod`), RLS-scoped by business unit like refunds (out-of-BU ids → 404).
+
+| method | path | roles | notes |
+|---|---|---|---|
+| GET | `/api/flags` | FLAG_READ | flat list of flag states in the caller's BUs: `{id, flag_key, description, business_unit, environment, enabled, version, updated_at, updated_by}` |
+| POST | `/api/flags/states/{id}/toggle` | flag_editor | **Idempotency-Key required**. Body `{enabled, expected_version}`. dev/staging: applied now (`status=applied`). prod: creates a change request (`status=pending`). 201 = created, 200 = replay. 409 `version_conflict` (stale), `no_change`, `idempotency_mismatch` |
+| GET | `/api/flags/states/{id}/audit` | FLAG_READ | audit timeline of one flag state (`flag.toggled`, `flag.change_requested`, `flag.change_approved`, `flag.change_rejected`) |
+| GET | `/api/flags/change-requests?status=` | FLAG_READ | newest first, max 200: `{id, flag_state_id, flag_key, business_unit, environment, desired_enabled, expected_version, status, requested_by, decided_by, decided_at, decision_reason, version, created_at}` |
+| POST | `/api/flags/change-requests/{id}/approve` | flag_approver | body `{expected_version, reason?}`. Maker-checker: requester → 403 `self_approval` (also enforced by DB trigger). Applies the change atomically, conditional on the flag version the requester saw; 409 if the flag moved or the request was already decided |
+| POST | `/api/flags/change-requests/{id}/reject` | flag_approver | body `{expected_version, reason?}`; same checks; the flag is unchanged |
+
+Domain events: `flag.toggled`, `flag.change_requested`, `flag.change_approved`,
+`flag.change_rejected` (outbox topic + `workflows.on_event`, `entity_type=flag_change_request`);
+`data`: `flag_key, business_unit, environment, desired_enabled, state, status, change_request_id`.
+Rule `flag-prod-change-needs-approval` notifies `flag_approver` in-app and by email.
 
 ## Workflows / notifications
 | method | path | roles | notes |

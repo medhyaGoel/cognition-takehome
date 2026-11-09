@@ -13,7 +13,8 @@ from tests.helpers import principal_for
 
 RUNTIME_ROLES = ("app_api", "app_worker")
 # Tables without business_unit that app_api may not read (write-only from requests).
-NON_BU_TABLES = {"outbox", "alembic_version"}
+# feature_flags: global catalogue (key + description); per-BU state lives in flag_states.
+NON_BU_TABLES = {"outbox", "alembic_version", "feature_flags"}
 
 _TABLES = """
 SELECT c.oid, c.relname, c.relrowsecurity

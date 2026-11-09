@@ -18,7 +18,7 @@ def test_me_from_oidc_claims(client):
     assert me.json() == {
         "subject": "carol@example.com",
         "display_name": "Carol",
-        "roles": ["refund_approver"],
+        "roles": ["flag_approver", "refund_approver"],
         "business_units": ["EU", "US"],
     }
 

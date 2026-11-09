@@ -57,6 +57,14 @@
       {
         "name": "finance_admin",
         "description": "Finance administration, CSV export"
+      },
+      {
+        "name": "flag_editor",
+        "description": "Toggle feature flags; request prod changes"
+      },
+      {
+        "name": "flag_approver",
+        "description": "Approve or reject prod feature-flag changes"
       }
     ]
   },
@@ -207,7 +215,8 @@
         }
       ],
       "realmRoles": [
-        "refund_agent"
+        "refund_agent",
+        "flag_editor"
       ],
       "groups": [
         "bu-us"
@@ -228,7 +237,8 @@
         }
       ],
       "realmRoles": [
-        "refund_agent"
+        "refund_agent",
+        "flag_editor"
       ],
       "groups": [
         "bu-eu"
@@ -270,7 +280,8 @@
         }
       ],
       "realmRoles": [
-        "refund_approver"
+        "refund_approver",
+        "flag_approver"
       ],
       "groups": [
         "bu-us",
@@ -293,7 +304,8 @@
       ],
       "realmRoles": [
         "finance_admin",
-        "refund_approver"
+        "refund_approver",
+        "flag_approver"
       ],
       "groups": [
         "bu-us",

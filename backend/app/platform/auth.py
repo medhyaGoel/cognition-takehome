@@ -31,9 +31,20 @@ class Role:
     REFUND_AGENT = "refund_agent"
     REFUND_APPROVER = "refund_approver"
     FINANCE_ADMIN = "finance_admin"
+    FLAG_EDITOR = "flag_editor"
+    FLAG_APPROVER = "flag_approver"
 
 
-ALL_ROLES = frozenset({Role.VIEWER, Role.REFUND_AGENT, Role.REFUND_APPROVER, Role.FINANCE_ADMIN})
+ALL_ROLES = frozenset(
+    {
+        Role.VIEWER,
+        Role.REFUND_AGENT,
+        Role.REFUND_APPROVER,
+        Role.FINANCE_ADMIN,
+        Role.FLAG_EDITOR,
+        Role.FLAG_APPROVER,
+    }
+)
 BUSINESS_UNITS = frozenset({"US", "EU"})
 _BU_GROUP_PREFIX = "bu-"
 _ALGORITHMS = ["RS256"]

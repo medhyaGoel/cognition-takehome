@@ -26,6 +26,7 @@ def test_shipped_file_is_valid():
         "refund-large-two-approvals",
         "refund-failed-page-oncall",
         "refund-succeeded-activity",
+        "flag-prod-change-needs-approval",
     ]
     (sla,) = cfg.schedules
     assert sla.job == "refund_sla_escalation" and sla.params["sla_minutes"] == 60
