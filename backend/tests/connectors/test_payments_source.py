@@ -10,13 +10,13 @@ def test_sync_mirrors_captured_payments_idempotently(owner_engine):
     with Session(owner_engine) as db:
         first = sync_payments(db, source)
         second = sync_payments(db, source)
-    assert first.inserted == 8  # 'pending' charge is excluded
+    assert first.inserted == 281  # 8 named + 273 synthetic; pending/voided are excluded
     assert second.inserted == 0 and second.drift == []
     with owner_engine.connect() as conn:
         rows = conn.execute(
             text("SELECT business_unit, count(*) FROM payments GROUP BY 1 ORDER BY 1")
         )
-        assert rows.all() == [("EU", 3), ("US", 5)]
+        assert rows.all() == [("EU", 95), ("US", 186)]
 
 
 def test_sync_reports_drift_and_never_overwrites_amount(owner_engine):
