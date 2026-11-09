@@ -102,7 +102,6 @@ def _emit(db: Session, name: str, cr: Mapping[str, Any], actor: str) -> None:
         db,
         topic=name,
         payload={"adapter": "log", "event": name, "entity_id": str(cr["flag_state_id"]), **data},
-        dedupe_key=f"{name}:{cr['id']}",
     )
     workflows.on_event(
         db,
