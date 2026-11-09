@@ -63,15 +63,36 @@ export interface RefundDetail extends Refund {
 }
 
 export interface Notification {
-  id: string;
+  id: number;
   created_at: string;
   topic: string;
   title: string;
   body: string;
-  recipient_role: string;
-  entity_type: string;
-  entity_id: string;
-  business_unit: string;
+  recipient_role: string | null;
+  entity_type: string | null;
+  entity_id: string | null;
+  business_unit: string | null;
+}
+
+export interface RuleCondition {
+  field: string;
+  op: string;
+  value: unknown;
+}
+
+export type RuleAction =
+  | { type: "set_required_approvals"; count: number }
+  | { type: "auto_approve" }
+  | { type: "notify"; channel: string; adapters: string[]; title: string | null; template: string };
+
+export interface WorkflowRule {
+  id: string;
+  kind: "event" | "schedule";
+  description: string;
+  on: string | null;
+  conditions: RuleCondition[];
+  actions: RuleAction[];
+  schedule?: { job: string; every_seconds: number; params: Record<string, unknown> } | null;
 }
 
 export interface CreateRefundBody {

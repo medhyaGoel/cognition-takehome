@@ -52,7 +52,7 @@ const fakeBackend: AuthBackend = {
   kind: "test",
   init: async () => "signed_in",
   getAccessToken: async () => "test-token",
-  onUnauthorized: () => {},
+  onUnauthorized: async () => true,
   switchUser: async () => {},
   signOut: async () => {},
 };

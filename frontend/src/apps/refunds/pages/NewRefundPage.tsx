@@ -70,7 +70,7 @@ export function NewRefundPage({ newKey }: { newKey?: KeyFactory } = {}) {
     [api, toast],
   );
 
-  const parsed = parseAmountToCents(amount);
+  const parsed = parseAmountToCents(amount, payment?.currency ?? "USD");
   const amountError = !parsed.ok
     ? parsed.error
     : payment && parsed.cents > payment.refundable_cents
@@ -223,7 +223,7 @@ export function NewRefundPage({ newKey }: { newKey?: KeyFactory } = {}) {
                     className={`input ${touched && amountError ? "invalid" : ""}`}
                     inputMode="decimal"
                     autoComplete="off"
-                    placeholder="0.00"
+                    placeholder={centsToDecimalString(0, payment.currency)}
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
                     aria-invalid={touched && !!amountError}
@@ -232,7 +232,7 @@ export function NewRefundPage({ newKey }: { newKey?: KeyFactory } = {}) {
                   <button
                     type="button"
                     className="btn btn-secondary"
-                    onClick={() => setAmount(centsToDecimalString(payment.refundable_cents))}
+                    onClick={() => setAmount(centsToDecimalString(payment.refundable_cents, payment.currency))}
                     disabled={payment.refundable_cents <= 0}
                   >
                     Full refundable

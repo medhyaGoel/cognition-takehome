@@ -50,9 +50,18 @@ describe("computeDashboard", () => {
     expect(s.awaitingPayout).toEqual({ count: 4, totals: { USD: 1600 } });
     expect(s.refunded7d).toEqual({ count: 1, totals: { USD: 4000 } });
     expect(s.failed).toEqual({ count: 1, totals: { USD: 1013 } });
-    // approved & required>0: 2h and 4h -> median 3h; auto-approved excluded
-    expect(s.medianTimeToApproveMs).toBe(3 * H);
+    // required>0 and approved or later: 2h, 4h (approved), 0 (processing), 0 (failed), 1d (succeeded);
+    // auto-approved, pending and negative (bad fixture) durations excluded -> median 2h.
+    expect(s.timeToApproveSample).toBe(5);
+    expect(s.medianTimeToApproveMs).toBe(2 * H);
+    expect(s.timeToApproveExact).toBe(false);
+  });
+
+  it("time-to-approve is exact when every sample is still awaiting payout", () => {
+    const s = computeDashboard(rows.slice(0, 6), { businessUnit: null, subject: "x", canApprove: false, now: NOW });
     expect(s.timeToApproveSample).toBe(2);
+    expect(s.medianTimeToApproveMs).toBe(3 * H);
+    expect(s.timeToApproveExact).toBe(true);
   });
 
   it("needs-my-attention excludes the user's own requests and non-pending refunds", () => {

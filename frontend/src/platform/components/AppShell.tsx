@@ -211,9 +211,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
         <div className="sidebar-foot">
           <Chip tone="success">Signed in via OIDC</Chip>
-          {import.meta.env.VITE_USE_MOCKS === "1" && (
-            <Chip tone="warning">Mocked: rules, notifications</Chip>
-          )}
           <span className="muted small">Access scoped by business unit</span>
         </div>
       </aside>

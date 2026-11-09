@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { refundsRoutes } from "./apps/refunds/routes";
 import { AuthProvider } from "./platform/auth/AuthProvider";
-import type { FetchLike } from "./platform/api/client";
 import type { AuthBackend } from "./platform/auth/types";
 import { AppShell } from "./platform/components/AppShell";
 import { EmptyState, LoadingState } from "./platform/components/States";
@@ -12,11 +11,10 @@ function FullPage({ children }: { children: ReactNode }) {
   return <div className="fullpage">{children}</div>;
 }
 
-export function App({ backend, transport }: { backend: AuthBackend; transport?: FetchLike }) {
+export function App({ backend }: { backend: AuthBackend }) {
   return (
     <AuthProvider
       backend={backend}
-      transport={transport}
       fallback={(phase) => (
         <FullPage>
           {phase === "loading" ? (

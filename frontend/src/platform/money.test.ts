@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { centsToDecimalString, formatCents, parseAmountToCents } from "./money";
+import { centsToDecimalString, currencyExponent, formatCents, parseAmountToCents } from "./money";
 
-const ok = (s: string) => {
-  const r = parseAmountToCents(s);
+const ok = (s: string, currency = "USD") => {
+  const r = parseAmountToCents(s, currency);
   if (!r.ok) throw new Error(`expected ok for ${s}: ${r.error}`);
   return r.cents;
 };
-const bad = (s: string) => {
-  const r = parseAmountToCents(s);
+const bad = (s: string, currency = "USD") => {
+  const r = parseAmountToCents(s, currency);
   expect(r.ok, `expected error for ${JSON.stringify(s)}`).toBe(false);
 };
 
@@ -46,16 +46,51 @@ describe("parseAmountToCents", () => {
 
 describe("formatting", () => {
   it("round-trips cents to a decimal string without floats", () => {
-    expect(centsToDecimalString(0)).toBe("0.00");
-    expect(centsToDecimalString(5)).toBe("0.05");
-    expect(centsToDecimalString(123456)).toBe("1234.56");
-    expect(centsToDecimalString(-250)).toBe("-2.50");
-    expect(centsToDecimalString(9007199254740991)).toBe("90071992547409.91");
+    expect(centsToDecimalString(0, "USD")).toBe("0.00");
+    expect(centsToDecimalString(5, "USD")).toBe("0.05");
+    expect(centsToDecimalString(123456, "USD")).toBe("1234.56");
+    expect(centsToDecimalString(-250, "USD")).toBe("-2.50");
+    expect(centsToDecimalString(9007199254740991, "USD")).toBe("90071992547409.91");
   });
 
   it("formats currency", () => {
     expect(formatCents(123456, "USD")).toBe("$1,234.56");
     expect(formatCents(1013, "EUR")).toBe("€10.13");
     expect(formatCents(9007199254740991, "USD")).toBe("$90,071,992,547,409.91");
+  });
+});
+
+describe("currency exponents (mirror backend format_money)", () => {
+  it("maps ISO codes to minor-unit digits", () => {
+    for (const c of ["JPY", "KRW"]) expect(currencyExponent(c)).toBe(0);
+    for (const c of ["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"]) expect(currencyExponent(c)).toBe(3);
+    for (const c of ["USD", "EUR", "GBP", "usd"]) expect(currencyExponent(c)).toBe(2);
+  });
+
+  it("0 decimals (JPY, KRW): whole units only", () => {
+    expect(ok("500", "JPY")).toBe(500);
+    expect(ok("1,234", "KRW")).toBe(1234);
+    bad("5.5", "JPY");
+    bad("5.00", "KRW");
+    expect(centsToDecimalString(500, "JPY")).toBe("500");
+    expect(formatCents(123456, "JPY")).toBe("¥123,456");
+  });
+
+  it("3 decimals (BHD, IQD, JOD, KWD, LYD, OMR, TND)", () => {
+    for (const c of ["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"]) {
+      expect(ok("1.234", c)).toBe(1234);
+      expect(ok("2.5", c)).toBe(2500);
+      bad("1.2345", c);
+      expect(centsToDecimalString(1234, c)).toBe("1.234");
+      expect(centsToDecimalString(5, c)).toBe("0.005");
+    }
+    expect(formatCents(1234, "KWD")).toMatch(/^KWD\s1\.234$/);
+    expect(formatCents(1234, "IQD")).toMatch(/^IQD\s1\.234$/);
+  });
+
+  it("2 decimals otherwise", () => {
+    expect(ok("1.23", "EUR")).toBe(123);
+    bad("1.234", "EUR");
+    expect(centsToDecimalString(123, "GBP")).toBe("1.23");
   });
 });

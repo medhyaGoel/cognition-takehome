@@ -35,13 +35,13 @@ export function NotificationsPage() {
                 <div className="notif-head">
                   <strong>{n.title}</strong>
                   <Chip>{n.topic}</Chip>
-                  <Chip tone="accent">{n.business_unit}</Chip>
+                  {n.business_unit && <Chip tone="accent">{n.business_unit}</Chip>}
                   <span className="muted small notif-time" title={formatDateTime(n.created_at)}>
                     {relativeTime(n.created_at)}
                   </span>
                 </div>
                 <p className="notif-body">{n.body}</p>
-                {n.entity_type === "refund" && (
+                {n.entity_type === "refund" && n.entity_id && (
                   <Link to={`/refunds/${n.entity_id}`} className="small">
                     Open refund →
                   </Link>

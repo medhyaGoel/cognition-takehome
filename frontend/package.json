@@ -8,7 +8,6 @@
   },
   "scripts": {
     "dev": "vite",
-    "dev:mocks": "VITE_USE_MOCKS=1 vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "lint": "eslint . --max-warnings=0",

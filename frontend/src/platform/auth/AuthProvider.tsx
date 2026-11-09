@@ -1,7 +1,16 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import { ApiClient, type FetchLike } from "../api/client";
 import { ApiContext } from "../api/context";
-import type { ApiError } from "../api/errors";
+import { ApiError } from "../api/errors";
 import type { AuthBackend, Me, Role } from "./types";
 
 export interface AuthContextValue {
@@ -27,6 +36,8 @@ type Phase =
   | { status: "ready"; me: Me };
 
 // React StrictMode runs effects twice; the OIDC callback must only be processed once.
+const MAX_RENEWALS_WITHOUT_ME = 2;
+
 const initOnce = new WeakMap<AuthBackend, Promise<"signed_in" | "redirecting">>();
 
 export function AuthProvider({
@@ -36,21 +47,15 @@ export function AuthProvider({
   transport,
 }: {
   backend: AuthBackend;
-  /** Optional fetch override (dev mocks, tests). */
+  /** Optional fetch override (tests). */
   transport?: FetchLike;
   children: ReactNode;
   fallback: (phase: "loading" | "redirecting" | { error: string }) => ReactNode;
 }) {
   const [phase, setPhase] = useState<Phase>({ status: "loading" });
-  const api = useMemo(
-    () =>
-      new ApiClient({
-        getAccessToken: () => backend.getAccessToken(),
-        onUnauthorized: () => backend.onUnauthorized(),
-        fetch: transport,
-      }),
-    [backend, transport],
-  );
+
+  const session = useMemo(() => createSession(backend, transport, setPhase), [backend, transport]);
+  const { api } = session;
 
   useEffect(() => {
     let cancelled = false;
@@ -64,7 +69,15 @@ export function AuthProvider({
         if (!cancelled) setPhase({ status: "redirecting" });
         return;
       }
-      const me = await api.get<Me>("/api/me");
+      let me: Me;
+      try {
+        me = await session.loadMe();
+      } catch (err) {
+        // Wait for the renewal the client started for this 401, then retry once.
+        if (!(err instanceof ApiError && err.kind === "unauthorized")) throw err;
+        if (!(await session.renewalAfter401())) return;
+        me = await session.loadMe();
+      }
       if (!cancelled) setPhase({ status: "ready", me });
     }).catch((err: unknown) => {
       if (!cancelled) setPhase({ status: "error", message: describe(err) });
@@ -72,7 +85,16 @@ export function AuthProvider({
     return () => {
       cancelled = true;
     };
-  }, [backend, api]);
+  }, [backend, session]);
+
+  // Silent refresh (or any other credential change): re-read the principal.
+  useEffect(
+    () =>
+      backend.subscribe?.(() => {
+        void session.refreshMe();
+      }),
+    [backend, session],
+  );
 
   const value = useMemo<AuthContextValue | null>(() => {
     if (phase.status !== "ready") return null;
@@ -96,9 +118,59 @@ export function AuthProvider({
   );
 }
 
+// One renewal at a time; a successful renewal re-reads /api/me so roles/BUs stay current.
+// Bounded: if /api/me keeps failing right after renewals, stop and show the error.
+function createSession(
+  backend: AuthBackend,
+  transport: FetchLike | undefined,
+  setPhase: Dispatch<SetStateAction<Phase>>,
+) {
+  let renewing: Promise<boolean> | null = null;
+  let lastRenewal: Promise<boolean> | null = null;
+  let meInFlight: Promise<Me> | null = null;
+  let renewalsWithoutMe = 0;
+  const api: ApiClient = new ApiClient({
+    getAccessToken: () => backend.getAccessToken(),
+    onUnauthorized: () => void renew(),
+    fetch: transport,
+  });
+  const loadMe = (): Promise<Me> =>
+    (meInFlight ??= api
+      .get<Me>("/api/me")
+      .then((me) => {
+        renewalsWithoutMe = 0;
+        return me;
+      })
+      .finally(() => {
+        meInFlight = null;
+      }));
+  const refreshMe = () =>
+    loadMe().then(
+      (me) => setPhase((p) => (p.status === "ready" ? { status: "ready", me } : p)),
+      () => {},
+    );
+  const renew = (): Promise<boolean> =>
+    (lastRenewal = renewing ??= backend
+      .onUnauthorized()
+      .then((ok) => {
+        if (ok && ++renewalsWithoutMe <= MAX_RENEWALS_WITHOUT_ME) {
+          void refreshMe();
+          return true;
+        }
+        setPhase({ status: "error", message: "Your session expired and could not be renewed." });
+        return false;
+      })
+      .finally(() => {
+        renewing = null;
+      }));
+  // The client starts a renewal on every 401 before rejecting; this is that renewal's outcome.
+  const renewalAfter401 = () => lastRenewal ?? renew();
+  return { api, loadMe, refreshMe, renewalAfter401 };
+}
+
 function describe(err: unknown): string {
   if (err && typeof err === "object" && "message" in err) {
-    return String((err as ApiError).message);
+    return String((err as { message: unknown }).message);
   }
   return "Sign-in failed";
 }

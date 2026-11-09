@@ -256,8 +256,10 @@ export function DashboardPage() {
               value={stats.medianTimeToApproveMs === null ? "—" : formatDuration(stats.medianTimeToApproveMs)}
               sub={
                 stats.timeToApproveSample === 0
-                  ? "No approved refunds awaiting payout"
-                  : `From ${stats.timeToApproveSample} refund${stats.timeToApproveSample === 1 ? "" : "s"} awaiting payout`
+                  ? "No human-approved refunds yet"
+                  : `${stats.timeToApproveSample} approved refund${stats.timeToApproveSample === 1 ? "" : "s"}${
+                      stats.timeToApproveExact ? "" : " · upper bound, includes payout"
+                    }`
               }
             />
           </div>

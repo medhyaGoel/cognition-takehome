@@ -7,6 +7,7 @@ import type {
   Refund,
   RefundDetail,
   RefundStatus,
+  WorkflowRule,
 } from "./types";
 
 export const MAX_PAGE = 100;
@@ -54,7 +55,7 @@ export const refundsApi = (api: ApiClient) => ({
   notifications: async (limit = 50, signal?: AbortSignal) =>
     asList<Notification>(await api.get("/api/notifications", { query: { limit }, signal })),
 
-  workflowRules: (signal?: AbortSignal) => api.get<unknown>("/api/workflows/rules", { signal }),
+  workflowRules: (signal?: AbortSignal) => api.get<WorkflowRule[]>("/api/workflows/rules", { signal }),
 });
 
 /**

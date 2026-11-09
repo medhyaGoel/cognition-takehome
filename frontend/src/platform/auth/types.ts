@@ -28,7 +28,8 @@ export interface AuthBackend {
   /** Resolves when the user is signed in. May navigate away to the IdP instead of resolving. */
   init(): Promise<"signed_in" | "redirecting">;
   getAccessToken(): Promise<string | null>;
-  onUnauthorized(): void;
+  /** Called on a 401. Resolves true if credentials were renewed; false if it fell back to re-login. */
+  onUnauthorized(): Promise<boolean>;
   /** Ends the IdP session and starts a fresh sign-in (lets the user pick another account). */
   switchUser(): Promise<void>;
   signOut(): Promise<void>;

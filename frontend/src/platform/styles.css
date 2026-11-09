@@ -1386,3 +1386,16 @@ a.kpi:hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* Workflow rules ---------------------------------------------------------- */
+.rule-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.rule-actions {
+  margin: 0;
+  padding-left: var(--s-4);
+  display: grid;
+  gap: var(--s-2);
+}

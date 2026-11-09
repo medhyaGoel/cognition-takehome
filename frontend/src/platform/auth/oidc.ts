@@ -83,11 +83,11 @@ export class OidcAuthBackend implements AuthBackend {
     return renewed?.access_token ?? null;
   }
 
-  onUnauthorized(): void {
+  async onUnauthorized(): Promise<boolean> {
     // Token rejected (expired early, key rotated, ...). Try one silent renew, else re-login.
-    void this.renew().then((u) => {
-      if (!u) void this.login();
-    });
+    const u = await this.renew();
+    if (!u) void this.login();
+    return u !== null;
   }
 
   async switchUser(): Promise<void> {
