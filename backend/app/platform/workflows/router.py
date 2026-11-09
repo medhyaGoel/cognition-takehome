@@ -97,10 +97,10 @@ def list_rules(_: Principal = Depends(require_roles(*ALL_READ))) -> list[RuleOut
 @router.get("/notifications", response_model=list[NotificationOut])
 def list_notifications(
     limit: int = Query(50, ge=1, le=100),
-    _: Principal = Depends(require_roles(Role.FINANCE_ADMIN, Role.REFUND_APPROVER)),
+    principal: Principal = Depends(require_roles(Role.FINANCE_ADMIN, Role.REFUND_APPROVER)),
     db: Session = Depends(get_db),
 ) -> list[NotificationOut]:
     return [
         NotificationOut.model_validate(n, from_attributes=True)
-        for n in list_recent(db, limit=limit)
+        for n in list_recent(db, roles=principal.roles, limit=limit)
     ]
