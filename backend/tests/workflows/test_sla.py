@@ -66,6 +66,17 @@ def test_next_window_escalates_again(make_refund, outbox_rows, owner_engine):
     assert sum(":w1:" in k for k in keys) == 3 and sum(":w2:" in k for k in keys) == 3
 
 
+def test_refund_locked_by_a_decision_is_skipped_not_escalated(
+    make_refund, outbox_rows, owner_engine
+):
+    rid = make_refund(age_minutes=61)
+    with owner_engine.connect() as decider, decider.begin():
+        # An approve/reject holds this lock until it commits; the refund may no longer be pending.
+        decider.execute(text("SELECT 1 FROM refunds WHERE id = :id FOR UPDATE"), {"id": rid})
+        assert run() == 0 and outbox_rows() == []
+    assert run() == 3
+
+
 def test_sla_minutes_is_configurable(make_refund):
     make_refund(age_minutes=11)
     assert run() == 0
