@@ -37,6 +37,10 @@ curl localhost:8000/healthz
 curl -s localhost:8080/realms/internal-tools/protocol/openid-connect/token \
   -d grant_type=password -d client_id=internal-tools-dev-cli -d username=alice -d password=demo-password
 ```
+Demo data: the source DB seeds ~300 synthetic charges. For refund history on the dashboard, run
+`docker compose exec api python -m app.demo_seed` (creates 40 refunds through the real API as the demo
+users, approves/rejects/pays them out, then backdates them over 14 days; safe to re-run).
+
 Demo users and roles: see `docs/api-contract.md`. Keycloak admin console: http://localhost:8080 (admin/admin, local only).
 
 ## Test
