@@ -10,24 +10,58 @@ from app.config import settings
 from app.platform.auth import Principal, get_principal
 from app.platform.errors import DomainError
 from app.platform.request_context import request_id_var
+from app.platform.security import (
+    BodySizeLimitMiddleware,
+    SecurityHeadersMiddleware,
+    UnhandledErrorMiddleware,
+    configure_cors,
+    cors_origins_from_env,
+    fastapi_settings,
+    install_log_redaction,
+    internal_error_response,
+    max_body_bytes,
+    security_headers,
+)
 from app.platform.workflows.router import router as workflows_router
 
 logging.basicConfig(level=logging.INFO)
+install_log_redaction()
+logger = logging.getLogger("app")
 
-app = FastAPI(title="Internal Tools Platform", version="0.1.0")
+app = FastAPI(
+    title="Internal Tools Platform",
+    version="0.1.0",
+    **fastapi_settings(production=settings.is_production),
+)
+
+# Middleware order (outermost first): security headers -> CORS (off unless configured) ->
+# generic 500 -> request id -> body size limit -> routes.
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=max_body_bytes())
+
+_REQUEST_ID_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:")
 
 
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
     incoming = request.headers.get("X-Request-ID", "")
-    request_id = incoming if 0 < len(incoming) <= 64 else str(uuid.uuid4())
+    valid = 0 < len(incoming) <= 64 and set(incoming) <= _REQUEST_ID_CHARS
+    request_id = incoming if valid else str(uuid.uuid4())
+    request.state.request_id = request_id
     token = request_id_var.set(request_id)
     try:
         response = await call_next(request)
+    except Exception:
+        logger.exception("unhandled error request_id=%s path=%s", request_id, request.url.path)
+        raise  # -> UnhandledErrorMiddleware (generic 500 inside CORS), then re-raised to the server
     finally:
         request_id_var.reset(token)
     response.headers["X-Request-ID"] = request_id
     return response
+
+
+app.add_middleware(UnhandledErrorMiddleware)
+configure_cors(app, cors_origins_from_env())
+app.add_middleware(SecurityHeadersMiddleware, production=settings.is_production)
 
 
 @app.exception_handler(DomainError)
@@ -35,6 +69,22 @@ async def domain_error_handler(_: Request, exc: DomainError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code, content={"error": {"code": exc.code, "message": exc.message}}
     )
+
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request: Request | None, exc: Exception) -> JSONResponse:
+    """Generic 500 for anything unhandled. Runs in Starlette's outermost ServerErrorMiddleware,
+    outside the header middleware, so it sets the security headers and request id itself."""
+    response = internal_error_response()
+    path = request.url.path if request is not None else ""
+    for name, value in security_headers(path, production=settings.is_production):
+        response.headers[name.decode()] = value.decode()
+    request_id = getattr(request.state, "request_id", None) if request is not None else None
+    if request_id:
+        response.headers["X-Request-ID"] = request_id
+    else:
+        logger.error("unhandled error outside request scope: %s", type(exc).__name__)
+    return response
 
 
 @app.get("/healthz", tags=["platform"])

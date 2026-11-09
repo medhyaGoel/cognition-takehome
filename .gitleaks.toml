@@ -1,0 +1,24 @@
+# gitleaks config: default rules + an allowlist of ONLY the documented local-dev placeholders.
+# Every value below is a non-secret used by docker-compose / tests / the local Keycloak realm and
+# is documented as local-only (README, AGENTS.md, docker-compose.yml header comment). Production
+# credentials come from the secret manager and never appear in the repo.
+# Do not add real-looking values here; rotate and remove a leaked secret instead.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documented local-dev placeholder credentials"
+regexTarget = "match"
+regexes = [
+  # Keycloak demo users' shared password (keycloak/internal-tools-realm.json, docs/api-contract.md)
+  '''demo-password''',
+  # Local Postgres role passwords in docker-compose.yml, app/config.py dev defaults, tests/conftest.py
+  '''app_api_(dev|test)''',
+  '''app_worker_(dev|test)''',
+  '''tools_reader_dev''',
+  # Schema-owner / source-db superuser placeholders in local connection URLs (user:password@)
+  '''://(app:app|source_admin:source_admin)@''',
+  # Keycloak bootstrap admin in docker-compose.yml (bound to 127.0.0.1)
+  '''KC_BOOTSTRAP_ADMIN_PASSWORD: admin''',
+]
