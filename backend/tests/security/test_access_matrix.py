@@ -282,12 +282,12 @@ ROW_SCOPED: dict[tuple[str, str], object] = {
     ("POST", "/api/refunds/{}/approve"): lambda t: (
         "POST",
         f"/api/refunds/{t['refund']}/approve",
-        {"expected_version": 1},
+        {"expected_version": t["version"]},
     ),
     ("POST", "/api/refunds/{}/reject"): lambda t: (
         "POST",
         f"/api/refunds/{t['refund']}/reject",
-        {"expected_version": 1, "reason": "bu matrix"},
+        {"expected_version": t["version"], "reason": "bu matrix"},
     ),
 }
 # List route -> (id field, target key) used to check the caller's own rows are present.
@@ -313,14 +313,17 @@ def bu_targets(client, make_payment):
     """One payment + one pending refund in each business unit, created through the API."""
     targets = {}
     for bu in BUSINESS_UNITS:
-        payment = str(make_payment(amount_cents=10_000, business_unit=bu))
+        payment = str(make_payment(amount_cents=100_000, business_unit=bu))
         r = client.post(
             "/api/refunds",
             headers={**auth_headers(REQUESTER[bu]), "Idempotency-Key": uuid.uuid4().hex},
-            json={"payment_id": payment, "amount_cents": 100, "reason": "bu matrix target"},
+            # Above the auto-approve rule, below the two-approval rule (config/workflows.yaml).
+            json={"payment_id": payment, "amount_cents": 10_000, "reason": "bu matrix target"},
         )
         assert r.status_code == 201, r.text
-        targets[bu] = {"payment": payment, "refund": r.json()["id"]}
+        refund = r.json()
+        assert refund["status"] == "pending_approval", refund
+        targets[bu] = {"payment": payment, "refund": refund["id"], "version": refund["version"]}
     return targets
 
 
