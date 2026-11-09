@@ -6,6 +6,7 @@ from app.platform.masking import mask_email
 
 _SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£"}
 _ZERO_DECIMAL = frozenset({"JPY", "KRW"})
+_THREE_DECIMAL = frozenset({"BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"})
 
 
 def format_money(amount_cents: int, currency: str) -> str:
@@ -16,6 +17,9 @@ def format_money(amount_cents: int, currency: str) -> str:
     symbol = _SYMBOLS.get(currency, "")
     if currency in _ZERO_DECIMAL:
         return f"{sign}{symbol}{units:,} {currency}"
+    if currency in _THREE_DECIMAL:
+        major, minor = divmod(units, 1000)
+        return f"{sign}{symbol}{major:,}.{minor:03d} {currency}"
     major, minor = divmod(units, 100)
     return f"{sign}{symbol}{major:,}.{minor:02d} {currency}"
 

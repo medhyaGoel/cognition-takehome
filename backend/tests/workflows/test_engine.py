@@ -105,6 +105,7 @@ def test_template_renders_only_plain_fields():
         (123_456_789, "GBP", "£1,234,567.89 GBP"),
         (500, "JPY", "500 JPY"),
         (100, "CHF", "1.00 CHF"),
+        (1_000, "BHD", "1.000 BHD"),
     ],
 )
 def test_format_money(cents, currency, expected):
